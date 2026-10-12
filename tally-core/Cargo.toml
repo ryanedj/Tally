@@ -1,0 +1,4 @@
+[package]
+name= "tally-core"
+version.workspace = true
+edition.workspace = true

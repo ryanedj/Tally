@@ -1,0 +1,127 @@
+' 5. Relay response
+' The reference for this protocol. The pseudo code in 5-relay-response.md
+' details each numbered step.
+
+@startuml relay-response
+
+skinparam style strictuml
+!pragma teoz true
+
+box "Sandbox" #LightBlue
+participant "program" as Program
+end box
+
+box "Tally proxy" #LightBlue
+participant "proxy" as Proxy
+participant "writer" as Writer
+database "log" as Log
+end box
+
+box "Upstream" #LightBlue
+participant "server" as Server
+end box
+
+note over Proxy
+given the request <latex>r</latex> just sent to the server (see 4),
+with <latex>r.\mathtt{wants\_close}</latex> if the program asked to close,
+and <latex>\mathit{shutdown}</latex> if the proxy is shutting down
+end note
+
+note over Proxy, Log
+if a line can't be written:
+reply 503 if no final head was relayed yet,
+and the proxy stops (see 2)
+end note
+
+group until a final head (not 1xx) is relayed
+
+  rnote over Proxy #d1d5ef
+    1. wait for the response head
+  end rnote
+
+  alt if the server stays silent too long
+
+    ref over Proxy, Writer, Log : call 2. log the upstream_error line (response_timeout), wait until on disk
+    Proxy --> Program : 504
+
+    rnote over Proxy #ffffff
+      <latex>\scriptstyle \text{return to 4: } \begin{cases} \mathtt{Close} & \quad\text{if } r.\mathtt{wants\_close} \ \vee\ \mathit{shutdown} \cr \mathtt{KeepOpen} & \quad\text{otherwise} \end{cases}</latex>
+    end rnote
+
+  else
+
+    Server --> Proxy : response head
+
+    rnote over Proxy #d1d5ef
+      2. check the head
+    end rnote
+
+    rnote over Proxy #ffffff
+      // <latex>\scriptstyle s</latex> the response head, cut short if the server closed first, <latex>\scriptstyle s.\mathtt{CL}</latex> its Content-Length (<latex>\scriptstyle \bot</latex> if none),
+      // <latex>\scriptstyle s.\mathtt{TE}</latex> whether it has a Transfer-Encoding, <latex>\scriptstyle s.\mathtt{Conn}</latex> the header names its Connection lists,
+      // a head with <latex>\scriptstyle s.\mathtt{status} \in [100, 200)</latex> is interim, any other is final
+      <latex>\scriptstyle \mathtt{bad} \iff s \text{ is cut short, too large, or breaks the strict rules} \ \vee\ s.\mathtt{status} = 101 \ \vee\ (s.\mathtt{status} \in [100, 200) \cup \{204\} \wedge (s.\mathtt{CL} \neq \bot \vee s.\mathtt{TE})) \ \vee\ (s.\mathtt{CL} \neq \bot \wedge s.\mathtt{TE}) \ \vee\ \{\mathtt{content\text{-}length}, \mathtt{transfer\text{-}encoding}\} \cap s.\mathtt{Conn} \neq \emptyset</latex>
+    end rnote
+
+    alt if <latex>\mathtt{bad}</latex>
+
+      rnote over Proxy #d1d5ef
+        3. bad response
+      end rnote
+
+      ref over Proxy, Writer, Log : call 2. log the upstream_error line (bad_response), wait until on disk
+      Proxy --> Program : 502
+
+      rnote over Proxy #d1d5ef
+        return Close to 4
+      end rnote
+
+    else
+
+      rnote over Proxy #d1d5ef
+        4. find where the response ends, rewrite the head:
+        drop the server's connection-level headers, write our own
+      end rnote
+
+      rnote over Proxy #ffffff
+        // <latex>\scriptstyle f</latex> where the body ends
+        <latex>\scriptstyle f = \begin{cases} 0 & \quad\text{if } s.\mathtt{status} \in [100, 200) \cup \{204, 304\} \cr s.\mathtt{CL} & \quad\text{if } s.\mathtt{CL} \neq \bot \cr \mathtt{close} & \quad\text{otherwise (chunked, or no length)} \end{cases}</latex>
+        <latex>\scriptstyle \mathtt{Connection} = \begin{cases} \mathtt{close} & \quad\text{if } s \text{ is final} \wedge (f = \mathtt{close} \ \vee\ r.\mathtt{wants\_close} \ \vee\ \mathit{shutdown}) \cr \text{none} & \quad\text{otherwise} \end{cases}</latex>
+      end rnote
+
+      Proxy --> Program : response head
+
+    end
+
+  end
+
+end
+
+rnote over Proxy #d1d5ef
+  5. relay the body, up to <latex>f</latex>
+end rnote
+
+Server --> Proxy : body
+Proxy --> Program : body
+
+alt if the server stays silent too long, or closes before <latex>f</latex> bytes when <latex>f \in \mathbb{N}</latex>
+
+  ref over Proxy, Writer, Log : call 2. log the upstream_error line (response_incomplete), wait until on disk
+
+  rnote over Proxy #d1d5ef
+    return Close to 4
+  end rnote
+
+else
+
+  rnote over Proxy #d1d5ef
+    6. return to 4
+  end rnote
+
+  rnote over Proxy #ffffff
+    <latex>\scriptstyle \begin{cases} \mathtt{Close} & \quad\text{if the final head said } \mathtt{Connection:\ close} \cr \mathtt{KeepOpen} & \quad\text{otherwise} \end{cases}</latex>
+  end rnote
+
+end
+
+@enduml

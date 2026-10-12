@@ -1,0 +1,7 @@
+# Private design notes, for me only
+notes/
+
+.claude/settings.local.json
+CLAUDE.local.md
+
+target/

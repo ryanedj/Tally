@@ -1,0 +1,91 @@
+' 6. Checker
+' The reference for this protocol. The pseudo code in 6-checker.md
+' details each numbered step.
+
+@startuml checker
+
+skinparam style strictuml
+!pragma teoz true
+
+actor "auditor" as Aud
+
+box "Audit" #LightBlue
+participant "checker" as Checker
+end box
+
+box "Files" #LightBlue
+database "settings" as Settings
+end box
+
+box "Tally proxy" #LightBlue
+database "log" as Log
+end box
+
+note over Checker
+given the paths of a run's log file and a settings file
+end note
+
+Aud -> Checker : check this run's log against these settings
+
+rnote over Checker #d1d5ef
+  1. fingerprint the settings file
+end rnote
+
+Checker -> Settings : read
+
+rnote over Checker #ffffff
+  <latex>\scriptstyle h = \mathrm{SHA256}(\text{settings file})</latex>
+end rnote
+
+rnote over Checker #d1d5ef
+  2. read the run's log
+end rnote
+
+Checker -> Log : read
+
+rnote over Checker #ffffff
+  // <latex>\scriptstyle R</latex> the well-formed lines of the run (each with its event's fields), <latex>\scriptstyle x</latex> a line, <latex>\scriptstyle i(x)</latex> its position in <latex>\scriptstyle R</latex>, from 0;
+  // a last line without a newline is set aside as torn
+end rnote
+
+rnote over Checker #d1d5ef
+  flag every malformed line
+end rnote
+
+alt if <latex>R = \emptyset \ \vee\ R_0.\mathtt{event} \neq \mathtt{start} \ \vee\ R_0.\mathtt{settings\_sha256} \neq h</latex>
+
+  rnote over Checker #d1d5ef
+    3. not judged: no start line (flagged),
+    or different settings
+  end rnote
+
+else
+
+  rnote over Checker #d1d5ef
+    4. check every line
+  end rnote
+
+  rnote over Checker #ffffff
+    // <latex>\scriptstyle c</latex> the settings' client, <latex>\scriptstyle H</latex> the listed hosts, <latex>\scriptstyle K</latex> the keys by name
+    <latex>\scriptstyle \mathtt{ok}(x) \iff \begin{array}{l} (i(x) = 0 \Rightarrow x.\mathtt{seq} = 0) \cr \wedge\ (i(x) > 0 \Rightarrow x.\mathtt{seq} = R_{i(x)-1}.\mathtt{seq} + 1) \cr \wedge\ x.\mathtt{client} = c \cr \wedge\ (x.\mathtt{event} = \mathtt{start} \iff i(x) = 0) \cr \wedge\ \neg\exists y \in R,\ y.\mathtt{event} = \mathtt{stop} \wedge i(y) < i(x) \cr \wedge\ (x.\mathtt{event} = \mathtt{release} \Rightarrow \forall n \in x.\mathtt{keys},\ n \in K \wedge K[n].\mathtt{host} = x.\mathtt{host}) \cr \wedge\ (x.\mathtt{event} = \mathtt{pass} \Rightarrow x.\mathtt{host} \in H) \cr \wedge\ (x.\mathtt{event} = \mathtt{upstream\_error} \Rightarrow \exists y \in R,\ y.\mathtt{seq} = x.\mathtt{about} < x.\mathtt{seq} \cr \qquad \wedge\ y.\mathtt{event} \in \{\mathtt{release}, \mathtt{pass}\} \wedge (y.\mathtt{keys}, y.\mathtt{host}) = (x.\mathtt{keys}, x.\mathtt{host})) \end{array}</latex>
+    <latex>\scriptstyle \mathtt{stopped} \iff \exists x \in R,\ x.\mathtt{event} = \mathtt{stop}</latex>
+  end rnote
+
+  rnote over Checker #d1d5ef
+    flag every <latex>x</latex> with <latex>\neg\,\mathtt{ok}(x)</latex>, and the run if <latex>\neg\,\mathtt{stopped}</latex>;
+    count the events by type and reason
+  end rnote
+
+end
+
+rnote over Checker #d1d5ef
+  5. report
+end rnote
+
+Checker --> Aud : counts and flags, whether the run was judged, torn last line
+
+rnote over Checker #ffffff
+  <latex>\scriptstyle \mathtt{exit} = \begin{cases} 1 & \quad\text{if anything is flagged} \cr 2 & \quad\text{else, if the run wasn't judged} \cr 0 & \quad\text{otherwise} \end{cases}</latex>
+end rnote
+
+@enduml

@@ -1,0 +1,106 @@
+' 1. Proxy startup
+' The reference for this protocol. The pseudo code in 1-proxy-startup.md
+' details each numbered step.
+
+@startuml proxy-startup
+
+skinparam style strictuml
+!pragma teoz true
+
+actor "operator" as Op
+
+box "Files" #LightBlue
+database "settings" as Settings
+database "secrets" as Secrets
+end box
+
+box "Tally proxy" #LightBlue
+participant "proxy" as Proxy
+participant "writer" as Writer
+database "log" as Log
+end box
+
+box "Sandbox" #LightBlue
+collections "programs" as Programs
+end box
+
+note over Proxy
+given the paths of the settings and secrets files
+end note
+
+note over Proxy, Log
+if a line can't be written:
+the proxy stops (see 2)
+end note
+
+Op -> Proxy : start, with both paths
+
+rnote over Proxy #d1d5ef
+  1. load the settings and the secrets
+end rnote
+
+Proxy -> Settings : read
+Proxy -> Secrets : read
+
+rnote over Proxy #d1d5ef
+  2. check them
+end rnote
+
+rnote over Proxy #ffffff
+  // <latex>\scriptstyle H</latex> the listed hosts, <latex>\scriptstyle K</latex> the keys, <latex>\scriptstyle S</latex> the secrets by key name,
+  // <latex>\scriptstyle \mathcal{P}</latex> the placeholder shape, <latex>\scriptstyle D</latex> the headers the proxy drops, writes, or reads for framing,
+  // <latex>\scriptstyle \mathcal{A}</latex> visible ASCII without space (a secret's length is bounded)
+  <latex>\scriptstyle \mathtt{ok} \iff \begin{array}{l} \forall k \in K,\ k.\mathtt{host} \in H \cr \wedge\ \forall k \in K,\ k.\mathtt{placeholder} \in \mathcal{P} \cr \wedge\ |\{k.\mathtt{placeholder} \mid k \in K\}| = |K| \cr \wedge\ \forall k \in K,\ k.\mathtt{header} \notin D \cr \wedge\ \mathrm{dom}(S) = \{k.\mathtt{name} \mid k \in K\} \cr \wedge\ \forall s \in \mathrm{ran}(S),\ s \in \mathcal{A}^{+} \end{array}</latex>
+end rnote
+
+alt if <latex>\neg\,\mathtt{ok}</latex>
+
+  Proxy --> Op : why, then exit
+
+else
+
+  rnote over Proxy #d1d5ef
+    3. prepare the start line
+  end rnote
+
+  rnote over Proxy #ffffff
+    <latex>\scriptstyle \mathtt{settings\_sha256} = \mathrm{SHA256}(\text{settings file}), \quad \mathtt{run} \leftarrow \text{random}</latex>
+  end rnote
+
+  rnote over Proxy #d1d5ef
+    4. create this run's log file
+  end rnote
+
+  ref over Proxy, Writer, Log : call 2. start the writer, log the start line, wait until on disk
+
+  note right of Writer
+    nothing listens
+    before this answer
+  end note
+
+  rnote over Proxy #d1d5ef
+    5. listen
+  end rnote
+
+  group while no shutdown signal, and the log works
+
+    Programs o-> Proxy : connect
+
+    ref over Proxy, Programs : call 4. one program connection
+
+  end
+
+  Op -> Proxy : SIGTERM or Ctrl-C
+
+  rnote over Proxy #d1d5ef
+    6. shut down: stop accepting, set shutdown,
+    then cut_off after a time limit (see 4)
+  end rnote
+
+  ref over Proxy, Writer, Log : call 2. log the stop line, after the queued ones, wait until on disk
+
+  Proxy --> Op : exit
+
+end
+
+@enduml

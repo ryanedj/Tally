@@ -1,0 +1,125 @@
+' 4. One program connection
+' The reference for this protocol. The pseudo code in 4-program-connection.md
+' details each numbered step.
+
+@startuml program-connection
+
+skinparam style strictuml
+!pragma teoz true
+
+box "Sandbox" #LightBlue
+participant "program" as Program
+end box
+
+box "Tally proxy" #LightBlue
+participant "proxy" as Proxy
+participant "writer" as Writer
+database "log" as Log
+end box
+
+box "Upstream" #LightBlue
+participant "server" as Server
+end box
+
+note over Proxy
+given the settings and the secrets, loaded at startup (see 1):
+<latex>H</latex> the listed hosts, <latex>K</latex> the keys,
+each key <latex>k</latex> with <latex>k.\mathtt{placeholder}</latex>, <latex>k.\mathtt{host}</latex>, <latex>k.\mathtt{header}</latex>;
+<latex>r</latex> the request being handled
+end note
+
+note over Proxy, Log
+if a line can't be written:
+reply 503, and the proxy stops (see 2)
+end note
+
+Program o-> Proxy : opens a connection
+
+group while the connection is open
+
+  Program -> Proxy : request
+
+  rnote over Proxy #d1d5ef
+    1. read the head and check it
+    follows the strict HTTP rules
+  end rnote
+
+  rnote over Proxy #d1d5ef
+    2. call 3. decide request: the first case that applies
+  end rnote
+
+  rnote over Proxy #ffffff
+    // <latex>\scriptstyle h_r</latex> host in the URL, <latex>\scriptstyle r.\mathtt{Host}</latex> the list of Host header values, both normalized (lowercase, :80 if no port),
+    // <latex>\scriptstyle r[h]</latex> the values of the header lines named <latex>\scriptstyle h</latex> in <latex>\scriptstyle r</latex>, <latex>\scriptstyle \#_r(h)</latex> their number,
+    // <latex>\scriptstyle K_r = \{k \in K \mid k.\mathtt{placeholder} \text{ occurs in } r[k.\mathtt{header}]\}</latex> the keys found, <latex>\scriptstyle \rho</latex> the reason of a refusal
+    <latex>\scriptstyle d = \begin{cases} \mathtt{refuse}(\mathtt{host\_mismatch}) & \quad\text{if } r.\mathtt{Host} \neq [h_r] \cr \mathtt{refuse}(\mathtt{malformed\_request}) & \quad\text{if } \exists k \in K_r,\ \#_r(k.\mathtt{header}) > 1 \cr \mathtt{refuse}(\mathtt{host\_not\_allowed}) & \quad\text{if } \exists k \in K_r,\ k.\mathtt{host} \neq h_r \cr \mathtt{refuse}(\mathtt{host\_not\_allowed}) & \quad\text{if } K_r = \emptyset \wedge h_r \notin H \cr \mathtt{pass} & \quad\text{if } K_r = \emptyset \cr \mathtt{release}(K_r) & \quad\text{otherwise} \end{cases}</latex>
+  end rnote
+
+  alt if <latex>d = \mathtt{refuse}(\rho)</latex>
+
+    rnote over Proxy #d1d5ef
+      3. refuse
+    end rnote
+
+    ref over Proxy, Writer, Log : call 2. log the refuse line, wait until on disk
+    Proxy --> Program : refusal: status + reason
+
+    rnote over Proxy #d1d5ef
+      close the connection
+    end rnote
+
+  else <latex>d = \mathtt{release}(K_r)</latex> or <latex>d = \mathtt{pass}</latex>
+
+    rnote over Proxy #d1d5ef
+      4. read the rest of the body,
+      then log the decision
+    end rnote
+
+    break if the body doesn't arrive in full
+      rnote over Proxy #d1d5ef
+        refuse as in 3, with <latex>\rho = \mathtt{incomplete\_request}</latex>
+      end rnote
+    end
+
+    ref over Proxy, Writer, Log : call 2. log the release or pass line, wait until on disk
+
+    note right of Writer
+      nothing is sent to the
+      server before this answer
+    end note
+
+    rnote over Proxy #d1d5ef
+      5. rewrite the request and swap
+      each placeholder for its real key
+    end rnote
+
+    Proxy -> Server : request, with the real keys
+
+    alt if the server can't be reached, or the shutdown time limit cuts in
+
+      ref over Proxy, Writer, Log : call 2. log the upstream_error line, wait until on disk
+      Proxy --> Program : 502 or 504 (none when cut off)
+
+    else
+
+      rnote over Proxy #d1d5ef
+        6. relay the response
+      end rnote
+
+      ref over Program, Proxy, Server : call 5. relay response
+
+    end
+
+    rnote over Proxy #d1d5ef
+      7. keep the connection for the next request
+    end rnote
+
+    rnote over Proxy #ffffff
+      <latex>\scriptstyle \mathtt{keep} \iff \text{the last reply to } r \text{ is complete} \ \wedge\ \text{it doesn't say } \mathtt{Connection:\ close}</latex>
+    end rnote
+
+  end
+
+end
+
+@enduml

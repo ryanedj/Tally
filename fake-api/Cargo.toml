@@ -1,0 +1,4 @@
+[package]
+name= "fake-api"
+version.workspace = true
+edition.workspace = true

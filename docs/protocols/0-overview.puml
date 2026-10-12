@@ -1,0 +1,108 @@
+' 0. Overview
+' How the parties interact, from startup to audit, on a high level.
+' Each phase names the protocols that detail it.
+
+@startuml overview
+
+skinparam style strictuml
+!pragma teoz true
+
+actor "operator" as Op
+
+box "Files" #LightBlue
+database "settings" as Settings
+database "secrets" as Secrets
+end box
+
+box "Sandbox" #LightBlue
+participant "program" as Program
+end box
+
+box "Tally proxy" #LightBlue
+participant "proxy" as Proxy
+participant "writer" as Writer
+database "log" as Log
+end box
+
+box "Upstream" #LightBlue
+participant "server" as Server
+end box
+
+box "Audit" #LightBlue
+participant "checker" as Checker
+end box
+
+actor "auditor" as Aud
+
+note over Program
+the program only ever
+holds placeholders
+end note
+
+== Startup (1, 2) ==
+
+Op -> Proxy : start
+Proxy -> Settings : read
+Proxy -> Secrets : read
+
+rnote over Proxy #d1d5ef
+  check them, or refuse to start
+end rnote
+
+Proxy -> Writer : start line
+Writer -> Log : on disk
+
+rnote over Proxy #d1d5ef
+  listen
+end rnote
+
+== A request (4, with 3, 2 and 5) ==
+
+Program -> Proxy : request, with a placeholder
+
+rnote over Proxy #d1d5ef
+  decide (3)
+end rnote
+
+alt allowed
+
+  Proxy -> Writer : release line
+  Writer -> Log : on disk, before anything is sent
+
+  Proxy -> Server : request, with the real key
+  Server --> Proxy : response
+  Proxy --> Program : response, relayed (5)
+
+else refused
+
+  Proxy -> Writer : refuse line, with the reason
+  Writer -> Log : on disk
+
+  Proxy --> Program : refusal, with the reason
+
+end
+
+== Shutdown (1, 2) ==
+
+Op -> Proxy : SIGTERM or Ctrl-C
+
+rnote over Proxy #d1d5ef
+  stop accepting, let requests in progress finish
+end rnote
+
+Writer -> Log : the lines still queued, then the stop line
+Proxy --> Op : exit
+
+== Audit (6) ==
+
+Aud -> Checker : check this log against these settings
+Checker -> Settings : read
+Checker -> Log : read
+
+rnote over Checker #d1d5ef
+  re-check every line against the settings
+end rnote
+
+Checker --> Aud : report: counts and flags
+
+@enduml

@@ -1,0 +1,4 @@
+[package]
+name= "proxy"
+version.workspace = true
+edition.workspace = true

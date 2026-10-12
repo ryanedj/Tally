@@ -1,0 +1,68 @@
+' 2. Log writer
+' The reference for this protocol. The pseudo code in 2-log-writer.md
+' details each numbered step.
+
+@startuml log-writer
+
+skinparam style strictuml
+!pragma teoz true
+
+box "Tally proxy" #LightBlue
+collections "connections" as Conns
+participant "writer" as Writer
+database "log" as Log
+end box
+
+note over Writer
+given this run's log file and the first line, the start line, both from startup (see 1);
+<latex>n</latex> the next line number, starting at 0
+end note
+
+group while the proxy runs, then on shutdown until the queue is empty
+
+  Conns -> Writer : line <latex>L</latex>, through the queue
+
+  note over Conns
+    queue full: the connection
+    waits; a line is never dropped
+  end note
+
+  rnote over Writer #d1d5ef
+    1. take the next line, in arrival order
+  end rnote
+
+  rnote over Writer #d1d5ef
+    2. complete it
+  end rnote
+
+  rnote over Writer #ffffff
+    <latex>\scriptstyle L.\mathtt{seq} \leftarrow n,\ \ L.\mathtt{client} \leftarrow \mathtt{client},\ \ L.\mathtt{time} \leftarrow \mathtt{now}</latex>
+  end rnote
+
+  rnote over Writer #d1d5ef
+    3. append it and force it to disk
+  end rnote
+
+  Writer -> Log : append <latex>L</latex>, force to disk
+
+  alt if it worked
+
+    Writer --> Conns : on disk
+
+    rnote over Writer #ffffff
+      <latex>\scriptstyle n \leftarrow n + 1</latex>
+    end rnote
+
+  else
+
+    rnote over Writer #d1d5ef
+      4. print the error, stop the proxy (see 1)
+    end rnote
+
+    Writer --> Conns : error, to this connection and every waiting one
+
+  end
+
+end
+
+@enduml

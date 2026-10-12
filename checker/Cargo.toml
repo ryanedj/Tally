@@ -1,0 +1,4 @@
+[package]
+name= "checker"
+version.workspace = true
+edition.workspace = true

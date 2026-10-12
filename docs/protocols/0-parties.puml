@@ -1,0 +1,92 @@
+' 0. Parties
+' Who does what, and who calls or reads whom, on a high level.
+' The protocol numbers point to the files that detail each party.
+
+@startuml parties
+
+left to right direction
+skinparam defaultTextAlignment left
+skinparam rectangle {
+  BackgroundColor #d1d5ef
+}
+skinparam database {
+  BackgroundColor #ffffff
+}
+
+actor "operator" as Operator
+actor "auditor" as Auditor
+
+rectangle "Files" #LightBlue {
+  database settings [
+    **settings**
+    ----
+    client, hosts and their server addresses,
+    keys: placeholder, allowed host, bound header
+  ]
+  database secrets [
+    **secrets**
+    ----
+    the real key values, by key name
+  ]
+}
+
+rectangle "Sandbox" #LightBlue {
+  rectangle program [
+    **program**
+    ----
+    calls APIs with placeholders
+  ]
+}
+
+rectangle "Tally proxy" #LightBlue {
+  rectangle proxy [
+    **proxy** (1, 3, 4, 5)
+    ----
+    checks the files at startup
+    decides each request
+    swaps placeholders for real keys
+    forwards requests, relays responses
+  ]
+  rectangle writer [
+    **writer** (2)
+    ----
+    the log's only writer
+    numbers each line
+    forces it to disk, then answers
+  ]
+  database log [
+    **log**
+    ----
+    one file per run, from start line to stop line
+    one line per decision or upstream error, append-only
+  ]
+}
+
+rectangle "Upstream" #LightBlue {
+  rectangle server [
+    **server**
+    ----
+    the real API
+  ]
+}
+
+rectangle "Audit" #LightBlue {
+  rectangle checker [
+    **checker** (6)
+    ----
+    re-checks the log against the settings
+  ]
+}
+
+Operator --> proxy : starts, stops
+program --> proxy : requests with placeholders;\ngets responses or refusals
+proxy --> settings : reads
+proxy --> secrets : reads
+proxy --> writer : logs every decision (2)
+writer --> log : appends, forces to disk
+proxy --> server : requests with real keys;\ngets responses
+Auditor --> checker : runs
+checker --> log : reads
+checker --> settings : reads
+
+@enduml
