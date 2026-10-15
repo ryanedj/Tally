@@ -1,7 +1,7 @@
 # Tally
 A secure proxy that controls, logs, and audits API-key access from sandboxed programs.
 
-Status: v1 design done, last changed 2026-10-12. Build in progress.
+Status: v1 design done, last changed 2026-10-15. Build in progress.
 
 ## What Tally does
 
@@ -261,21 +261,22 @@ On `SIGTERM` or Ctrl-C, the proxy:
 
 ### Cargo workspace
 
-- Shared library + separate binaries: one `tally-core` library crate for shared code (parser, checks, log format, settings loading), and four binary crates (`fake-api`, `proxy`, `fake-program`, `checker`) that depend on it.
+- Shared library + separate binaries: one `tally-core` library crate for shared code (parser, checks, log format, settings loading), and four binary crates (`fake-api`, `proxy`, `fake-program`, `checker`). All but the fake API depend on it: the fake API reads requests with `httparse`, so a bug in Tally's parser can't hide in the tests meant to catch it.
 
 ### Tests
 
 - Unit tests: `#[cfg(test)] mod tests` inside source files (e.g. `tally-core/src/lib.rs` and submodules) for the parser, checks and settings loading.
 - Integration tests: one test binary per crate, `tests/it/main.rs`, with one module per topic.
-- Every parser test input also goes through `httparse` (a dev-dependency only). Tally must never accept a head that `httparse` rejects.
+- Every parser test input also goes through `httparse` (a dev-dependency of `tally-core`; only the fake API uses it in its own code). Tally must never accept a head that `httparse` rejects.
 - One test per row of the exits tables, in [1. Proxy startup](protocols/1-proxy-startup.md), [4. One program connection](protocols/4-program-connection.md) and [6. Checker](protocols/6-checker.md): the exits of [2. Log writer](protocols/2-log-writer.md) are rows of the first table, and those of [5. Relay response](protocols/5-relay-response.md) rows of the second. And one test per case of [3. Decide request](protocols/3-decide-request.md).
 - Smuggling tests: single-request cases in the parser tables (L2), connection-level cases in `proxy`'s tests (L5). A second round is optional.
 
 ### Fake API
 
-- Prints and records every request it receives, so tests can check what reached it and what didn't.
-- When a request reaches it, the test checks that the matching line is already in the log.
-- Has endpoints with awkward responses: chunked, no length (ends when the connection closes), `204`, `/echo-headers` (sends back the request's headers), a `103` before the final response, and a redirect to another host.
+- Prints and records every request it receives, so tests can check what reached it and what didn't. Bytes that aren't a complete request (a head it can't parse, a request cut short, leftover bytes) are recorded too. A head it can't parse gets a `400` with `Connection: close` (RFC 9112 §2.2) then the connection closes in stages.
+- Stops reading a connection once 2 MiB have arrived, before the reply and again after it. *Why:* that is more than the largest request the proxy forwards (an 8 KiB head and a 1 MiB body), so each one is recorded whole, while a sender that never stops can't fill the memory.
+- Answers only the first request on each connection, then closes in stages (RFC 9112 §9.6). Anything sent after it is recorded but never answered, and every record carries the number of the connection it arrived on, so a proxy that sends two requests on one Server connection shows up in the tests (One exception is the response that never ends, it only sends, so nothing is read during it).
+- Has endpoints with awkward responses: chunked, no length (ends when the connection closes), `204`, `/echo-headers` (sends back the request's head), a `103`, then a pause before the final response, a redirect to another host, and a response that never ends (it keeps sending until the proxy closes the connection).
 - Has endpoints that misbehave, at least one for each reason a response can fail with: a `101`, a `1xx` with `Content-Length`, a head cut off by a close (all `bad_response`), silence before the head (`response_timeout`), and a body cut short (`response_incomplete`).
 
 ### Docker (at the end of v1)
@@ -318,7 +319,7 @@ Each skill has 3 prompts that should trigger it and 2 that shouldn't, checked by
 
 - `cargo test` passes, including the parser tables and the smuggling tests.
 - With `cargo` and with `docker compose up`:
-  - a valid request reaches the fake API with the real key, and its `release` line was in the log before it arrived;
+  - a valid request reaches the fake API with the real key, and its `release` line is in the log. With `cargo`, a test also holds the Writer's answer and checks that nothing reaches the fake API until it's released;
   - a request without a placeholder to a listed host is forwarded and logged as `pass`; to any other host it's refused;
   - every refusal case can be triggered, is logged, and never reaches the fake API. That includes each `host_mismatch` case (disagreement, no `Host`, two `Host`) and each `malformed_request` rule;
   - a request with two keys, one allowed for the host and one not, sends nothing;

@@ -5,7 +5,7 @@ Tally is an experimental learning project, not a product: don't worry about back
 ## Working rules
 
 - Never run `git commit` or `git push`. The user reviews and commits every change.
-- The user writes the code. Help plan, explain, point to documentation and review; don't edit code unless asked.
+- The user writes the code (except tests). Help plan, explain, point to documentation and review; don't edit code unless asked.
 - Never guess. Check the documentation (Rust and crate docs, RFCs) before stating how something works, and say when something is unverified.
 - One decision at a time, in plain language, with 2–3 options and a recommendation.
 

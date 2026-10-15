@@ -2,7 +2,9 @@
 
 Tally is a proxy for sandboxed programs that need to call outside APIs. The program gets placeholders instead of the real API keys, and the proxy swaps a placeholder for its key only after writing its decision to a log on disk.
 
-Status: the v1 design is done (last changed 2026-10-12), and the build has started. Nothing runs yet.
+Tally is a learning project.
+
+Status: the v1 design is done (last changed 2026-10-15), and the build has started: the fake API (L1) is written and tested.
 
 ## How it works
 
@@ -67,6 +69,13 @@ The program sends its requests through the proxy, with placeholders. For each re
 
 Refused requests are logged too, with a reason. A separate checker reads the log and the settings afterwards and reports any release that broke the rules.
 
+## Why
+
+With v1 I want to learn:
+- networking in Rust (tokio) and HTTP, with a parser written from scratch;
+- Docker and Docker Compose;
+- writing and using Claude skills.
+
 ## What v1 guarantees
 
 - The program never receives a real key, unless an allowed API echoes it back (see [Limits of v1](#limits-of-v1)).
@@ -90,13 +99,6 @@ Refused requests are logged too, with a reason. A separate checker reads the log
 
 The design, with the reason for each choice, is in [docs/DESIGN.md](docs/DESIGN.md). Each protocol has a sequence diagram and pseudo code in [docs/protocols/](docs/protocols/).
 
-## Why
-
-Tally is a learning project. With v1 I want to learn:
-- networking in Rust (tokio) and HTTP, with a parser written from scratch;
-- Docker and Docker Compose;
-- writing and using Claude skills.
-
 ## Repository layout
 
 | Path | What |
@@ -112,7 +114,7 @@ Tally is a learning project. With v1 I want to learn:
 
 - [x] L0, design: DESIGN.md, and a diagram and pseudo code for each protocol
 - [x] L0, setup: workspace, `.gitignore`, `CLAUDE.md`, `git init`, review skill
-- [ ] L1: fake API
+- [x] L1: fake API
 - [ ] L2: request and response parsers, with tables of tricky inputs
 - [ ] L3: loading settings and secrets, and deciding each request
 - [ ] L4: log writer; the log format is fixed from here on

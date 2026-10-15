@@ -19,5 +19,5 @@ else
   echo
 fi
 run cargo fmt --check
-run cargo clippy
+run cargo clippy --all-targets
 exit 0
