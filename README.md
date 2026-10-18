@@ -4,7 +4,7 @@ Tally is a proxy for sandboxed programs that need to call outside APIs. The prog
 
 Tally is a learning project.
 
-Status: the v1 design is done (last changed 2026-10-15), and the build has started: the fake API (L1) is written and tested.
+Status: the v1 design is done (last changed 2026-10-18), and the build has started: the fake API (L1) is written and tested.
 
 ## How it works
 
@@ -115,7 +115,7 @@ The design, with the reason for each choice, is in [docs/DESIGN.md](docs/DESIGN.
 - [x] L0, design: DESIGN.md, and a diagram and pseudo code for each protocol
 - [x] L0, setup: workspace, `.gitignore`, `CLAUDE.md`, `git init`, review skill
 - [x] L1: fake API
-- [ ] L2: request and response parsers, with tables of tricky inputs
+- [x] L2: request and response parsers, with tables of tricky inputs
 - [ ] L3: loading settings and secrets, and deciding each request
 - [ ] L4: log writer; the log format is fixed from here on
 - [ ] L5: proxy loop, with connection-level smuggling tests

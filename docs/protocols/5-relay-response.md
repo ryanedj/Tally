@@ -15,7 +15,7 @@
 
 **Called by:** [4. One program connection](4-program-connection.md), at step 6.
 
-**Uses:** `upstream_failed` from [4. One program connection](4-program-connection.md).
+**Uses:** the [Parser](../DESIGN.md#parser), to read and check the response head and find where its body ends (steps 2 and 4), and `upstream_failed` from [4. One program connection](4-program-connection.md).
 
 ## Pseudo code
 
@@ -25,20 +25,12 @@ The [sequence diagram](5-relay-response.puml) is the reference. Each numbered st
 function relay_response(server, program, request, decision, writer, shutdown, cut_off):
     loop:                                 // once per head: any interim (1xx) heads, then the final one
         // 1. Wait for the response head
-        head_read = read_response_head(server, silence_limit = 30 s)   // TimedOut, Closed, TooLarge or Complete(head_bytes)
+        head_read = read_response_head(server, silence_limit = 30 s)   // each line parsed as it arrives: TimedOut, Closed, Error or Complete(response)
         if head_read is TimedOut:
             return upstream_failed(program, writer, decision, response_timeout, request, shutdown)
 
         // 2. Check the head
-        if head_read is Complete(head_bytes):
-            response = parse_response_head(head_bytes)
-        else:                             // the Server closed before the end of the head, or it's over 8 KiB
-            response = Error
-        is_bad = response is Error
-                 or response.status is 101
-                 or (response.status in [1xx, 204] and (response has Content-Length or response has Transfer-Encoding))
-                 or (response has Content-Length and response has Transfer-Encoding)
-                 or response's Connection names content-length or transfer-encoding
+        is_bad = head_read is not Complete(response)   // the Server closed before the end of the head, or a line or the whole head breaks a rule (see DESIGN, Responses)
 
         // 3. Bad response
         if is_bad:

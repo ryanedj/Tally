@@ -1,7 +1,7 @@
 # Tally
 A secure proxy that controls, logs, and audits API-key access from sandboxed programs.
 
-Status: v1 design done, last changed 2026-10-15. Build in progress.
+Status: v1 design done, last changed 2026-10-18. Build in progress.
 
 ## What Tally does
 
@@ -47,15 +47,15 @@ I first meant to work everything out on my own, thinking it would teach me more.
 | Source | What it is | What Tally takes from it |
 |---|---|---|
 | nginx | The most common reverse proxy | The 1 MiB body limit; reading the whole body before contacting the server; reading and discarding what the client still sends before closing (`lingering_close`) |
-| Go's `net/http` and `httputil.ReverseProxy` | A server and a proxy with well-documented timeouts | Idle wait and head deadline; closing the write side before closing the connection; when a connection can be reused; graceful shutdown (close idle connections at once, finish active ones without keep-alive); `Connection: close` on every reply before a close; forwarding interim (`1xx`) responses; 502 when the server gives no usable response |
-| hyper | The HTTP library under most Rust servers | Strict defaults; status codes for oversized heads |
+| Go's `net/http` and `httputil.ReverseProxy` | A server and a proxy with well-documented timeouts | Idle wait and head deadline; closing the write side before closing the connection; when a connection can be reused; graceful shutdown (close idle connections at once, finish active ones without keep-alive); `Connection: close` on every reply before a close; forwarding interim (`1xx`) responses; 502 when the server gives no usable response; an empty path sent as `/`; a response's `Connection` list read with its empty elements skipped; a head judged line by line, as each line arrives |
+| hyper | The HTTP library under most Rust servers | Strict defaults; status codes for oversized heads; the syntax checked before the meaning; a response's checks and where its body ends decided with its head |
 | Envoy | A proxy for service-to-service traffic, with a credential injector | Connect timeout; operator-chosen header for the credential |
 | Pingora | Cloudflare's Rust proxy framework | Its security fixes, as a list of mistakes to avoid |
 | Smokescreen (Stripe) | An egress proxy that decides which hosts a program may reach | Per-decision logging; checking addresses, not names |
 | Fly.io's tokenizer | A proxy that adds secrets to requests from untrusted programs | The closest match to Tally: host allowlists per secret, no reuse of server connections, and the allowlist as its answer to a service that echoes secrets |
 | iron-proxy | An egress proxy that swaps proxy tokens from a sandbox for real secrets | Swapping a token only where it's configured to go: headers by default, the URL only on request, since URLs end up in access logs |
 | RFC 6750 (OAuth 2.0 bearer tokens) | How a client sends a bearer token | Keep keys out of URLs, since URLs end up in logs (§2.3, §5.3) |
-| `httparse` | Rust's strict HTTP/1 head parser | A cross-check for Tally's own parser in tests |
+| `httparse` | Rust's strict HTTP/1 head parser | A cross-check for Tally's own parser in tests; the parser's shape (the bytes read so far, read again from the start, give a partial head, a complete one, or an error); one named test per table row |
 | Schneier and Kelsey, *Secure Audit Logs to Support Computer Forensics* (1999) | A design for audit logs kept on a machine that may be taken over | One file per session, opened and closed by special entries; and the reason a crash and a cut end look the same without cryptography |
 | systemd-journald | Linux's system log service | After an unclean stop, a new file instead of appending to the old one |
 | PostgreSQL | A database that forces its write-ahead log to disk | Stop at once when a sync fails, never retry (`data_sync_retry` off) |
@@ -147,7 +147,7 @@ On `SIGTERM` or Ctrl-C, the proxy:
 | `refuse`, `body_too_large` | A `Content-Length` over 1 MiB, refused before any body is read | 413 |
 | `refuse`, `malformed_request` | Anything else outside the strict subset, including a short-form (`/path`) target, or the bound header of a key found appearing more than once (RFC 9110 §5.3) | 400 |
 | `refuse`, `host_mismatch` | URL host and `Host` disagree, or zero or several `Host` headers | 400 |
-| `refuse`, `unsupported_request` | Valid HTTP that v1 doesn't handle: `Transfer-Encoding`, `Upgrade`, `Expect`, HTTP/1.0, a `Connection` header other than `close` or `keep-alive`, methods other than `GET`, `POST`, `PUT`, `PATCH`, `DELETE` | 501 |
+| `refuse`, `unsupported_request` | Valid HTTP that v1 doesn't handle: `Transfer-Encoding`, `Upgrade`, `Expect`, HTTP/1.0, a scheme other than `http`, a `Connection` header other than one line with a single `close` or `keep-alive`, methods other than `GET`, `POST`, `PUT`, `PATCH`, `DELETE` | 501 |
 | `refuse`, `host_not_allowed` | A key found isn't allowed for this host, or no key is found and the host isn't listed | 403 |
 | `upstream_error`, `connect_failed` | The connection to the Server failed | 502 |
 | `upstream_error`, `connect_timeout` | No connection to the Server within 5 s | 504 |
@@ -166,15 +166,21 @@ On `SIGTERM` or Ctrl-C, the proxy:
 
 - Hand-written, strict subset of HTTP/1.1. The same parser reads request heads and response heads.
 - Header names are case-insensitive (RFC 9110 §5.1). The parser lowercases them, and startup lowercases each key's bound header, so every comparison after that (`Host`, bound headers, duplicates, dropped headers) is exact. Heads are forwarded with lowercase names, both ways. *Why:* one place to get case right, instead of every comparison; Rust's `http` crate does the same.
-- Refused as `malformed_request`:
+- Each line is judged once it has fully arrived; a line that doesn't end within 8 KiB is `head_too_large`, whatever it holds. The syntax is checked first, then the meaning: when a head breaks rules of both kinds, the syntax's reason is logged (`malformed_request` or `head_too_large`); within each kind, the first faulty line wins. *Why:* the same syntax code reads requests and responses, and each side adds its own checks after it, as in hyper. Go's `net/textproto` also reads heads line by line. So a peer that stalls in the middle of a bad line is refused for its timeout (`incomplete_request` or `response_timeout`).
+- Refused as `malformed_request` (`bad_response` in a response):
   - a line ending that isn't `\r\n`, or a lone `\r` or `\n` anywhere
   - a request line that isn't `METHOD target VERSION` with exactly one space between the parts, or a version other than `HTTP/1.1` (`HTTP/1.0` is refused as `unsupported_request` instead)
+  - a status line that isn't `HTTP/1.1`, a code from 100 to 599, and a reason phrase that may be empty, with one space between each (RFC 9112 §4, RFC 9110 §15)
   - an empty line before the request line, or whitespace between it and the first header
   - a header name with characters outside the token set (RFC 9110 §5.6.2), or a space before the colon
   - a header continued on the next line
-  - control characters in a header value
+  - control characters other than tab in a header value
   - a `Content-Length` that isn't plain digits (no sign, no leading zeros except `0`), or appears twice
+  - a short-form target (`/path`), or any other target that isn't `scheme://host[:port]` with an optional path and query
   - a URL host with user info (`user@`), a trailing dot, percent-encoding, or characters other than letters, digits, `-` and `.`
+  - an empty host, a port with characters other than digits, or a port of 0 or over 65535
+  - a path or query with characters RFC 3986 doesn't allow there (§3.3, §3.4), a `%` not followed by two hex digits, or a `#`
+- Accepted as the RFCs allow: the scheme `http` in any case (RFC 3986 §3.1); an empty path, sent as `/` (RFC 9112 §3.2.1); an empty port, which means 80, and leading zeros in a port (RFC 9110 §4.2.1); a tab inside a header value and bytes 0x80 to 0xFF, kept as they are, while spaces and tabs around a value are dropped (RFC 9110 §5.5).
 - Refused with their own reasons: `head_too_large`, `body_too_large` and `unsupported_request`; see the table above.
 
 ### Timeouts
@@ -205,6 +211,7 @@ On `SIGTERM` or Ctrl-C, the proxy:
 
 - Every response head is parsed with the same strict parser.
 - Interim responses (`1xx` other than `101`) are relayed to the program as they arrive, rewritten like a final head but without a `Connection` header of the proxy's own; the proxy then waits for the next head. *Why:* RFC 9110 §15.2: "A proxy MUST forward 1xx responses unless the proxy itself requested the generation of the 1xx response."
+- A response's `Connection` header is read as a list (RFC 9110 §5.6.1): every line is split on commas, empty elements are skipped, and each other element must be a token (otherwise `bad_response`), lowercased. *Why:* unlike the program, a server may name any header there, since dropping it changes nothing the proxy decided. Go's `ReverseProxy` reads it the same way.
 - `502` and `upstream_error`, `bad_response`, both connections closed, when a response:
   - breaks the strict rules
   - stops before the end of its head (the Server closes), or has a head over 8 KiB or with more than 100 headers, the same limits as for requests
@@ -265,7 +272,7 @@ On `SIGTERM` or Ctrl-C, the proxy:
 
 ### Tests
 
-- Unit tests: `#[cfg(test)] mod tests` inside source files (e.g. `tally-core/src/lib.rs` and submodules) for the parser, checks and settings loading.
+- Unit tests: `#[cfg(test)] mod tests` inside source files, for checks and settings loading. The parser's tables are integration tests in `tally-core/tests/it/`, one module per topic, since they use only its public functions.
 - Integration tests: one test binary per crate, `tests/it/main.rs`, with one module per topic.
 - Every parser test input also goes through `httparse` (a dev-dependency of `tally-core`; only the fake API uses it in its own code). Tally must never accept a head that `httparse` rejects.
 - One test per row of the exits tables, in [1. Proxy startup](protocols/1-proxy-startup.md), [4. One program connection](protocols/4-program-connection.md) and [6. Checker](protocols/6-checker.md): the exits of [2. Log writer](protocols/2-log-writer.md) are rows of the first table, and those of [5. Relay response](protocols/5-relay-response.md) rows of the second. And one test per case of [3. Decide request](protocols/3-decide-request.md).
@@ -306,7 +313,7 @@ Each skill has 3 prompts that should trigger it and 2 that shouldn't, checked by
 |---|---|
 | L0 | Design: this document, and a sequence diagram and pseudo code for each protocol. Setup: cargo workspace, `.gitignore`, my own `CLAUDE.md`, `git init`, skill `tally-review` |
 | L1 | Fake API: prints and records each request; `Content-Length`, chunked, no-length, `204`, `103` and `/echo-headers` responses, a redirect, and the misbehaving endpoints |
-| L2 | Request-head and response-head parsers, same rules, each with a table of good and tricky inputs |
+| L2 | Request-head and response-head parsers, same rules, each with a table of good and tricky inputs; the response checks of step 2 of [5. Relay response](protocols/5-relay-response.md), and where a response's body ends |
 | L3 | Loading and checking settings and secrets, with the settings hash (the checks of [1. Proxy startup](protocols/1-proxy-startup.md)), and decisions as pure functions ([3. Decide request](protocols/3-decide-request.md)) |
 | L4 | Log writer ([2. Log writer](protocols/2-log-writer.md)): a new file per run, one writer, lines forced to disk, stop on error, `start` and `stop` lines and `seq`. The log format is frozen here |
 | L5 | Proxy loop ([4. One program connection](protocols/4-program-connection.md) and [5. Relay response](protocols/5-relay-response.md), and the listen loop and shutdown of [1. Proxy startup](protocols/1-proxy-startup.md)): parse → decide → read body → log → rewrite → forward → relay. Connection-level smuggling tests written first: glued requests, lying lengths, leftover bytes. The biggest step |

@@ -50,19 +50,15 @@ function handle_connection(program, settings, secrets, writer, shutdown, cut_off
 
     loop:
         // 1. Read the head and check it follows the strict HTTP rules
-        head_read = read_head(program, buffer)   // 30 s for the first byte, then 10 s and 8 KiB for the whole head
+        head_read = read_head(program, buffer)   // each line parsed as it arrives; 30 s for the first byte, then 10 s and 8 KiB for the whole head
         match head_read:
-            Closed               -> return                  // closed before any byte: no line
-            Idle                 -> close(program); return  // 30 s of silence: no line, no reply
-            ShuttingDown         -> close(program); return  // shutdown before any byte: no line, no reply
-            ClosedPartWay        -> refuse(program, writer, Refusal(incomplete_request), can_reply = false); return
-            TimedOut             -> refuse(program, writer, Refusal(incomplete_request)); return
-            TooLarge             -> refuse(program, writer, Refusal(head_too_large)); return
-            Complete(head_bytes) -> request = parse_request_head(head_bytes)
-
-        if request is Error(reason):      // malformed_request, unsupported_request, head_too_large (over 100 headers) or body_too_large (Content-Length over 1 MiB)
-            refuse(program, writer, Refusal(reason))
-            return
+            Closed            -> return                  // closed before any byte: no line
+            Idle              -> close(program); return  // 30 s of silence: no line, no reply
+            ShuttingDown      -> close(program); return  // shutdown before any byte: no line, no reply
+            ClosedPartWay     -> refuse(program, writer, Refusal(incomplete_request), can_reply = false); return
+            TimedOut          -> refuse(program, writer, Refusal(incomplete_request)); return
+            Error(reason)     -> refuse(program, writer, Refusal(reason)); return   // a line, or the whole head, breaks a rule: malformed_request, unsupported_request, head_too_large or body_too_large
+            Complete(request) -> (go on)
 
         // 2. Decide the request: the first case that applies
         decision = decide(request, settings)                  // calls 3

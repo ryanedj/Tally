@@ -8,3 +8,6 @@ workspace = true
 
 [dependencies]
 tokio.workspace = true
+
+[dev-dependencies]
+httparse.workspace = true
