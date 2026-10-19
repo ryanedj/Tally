@@ -4,6 +4,8 @@ mod response;
 pub use request::{Method, RequestHead, parse_host_port, parse_request_head};
 pub use response::{BodyEnd, ResponseHead, parse_response_head};
 
+pub(crate) use request::{host_port, normalize_host};
+
 use crate::error::ParseError;
 
 /// The longest head, up to and including its empty line.

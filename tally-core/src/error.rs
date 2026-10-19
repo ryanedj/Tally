@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseError {
     // malformed_request (pass 1)
@@ -66,4 +68,51 @@ pub enum ParseError {
     ConnectionList,
     /// A "Connection" naming "content-length" or "transfer-encoding".
     ConnectionNamesFraming,
+}
+
+/// Why a settings or secrets file couldn't be loaded.
+#[derive(Debug, thiserror::Error)]
+pub enum LoadError {
+    #[error("{}: can't be read: {source}", .path.display())]
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("{}: not valid, {}: {message}", .path.display(), at_line(.line))]
+    InvalidSettings {
+        path: PathBuf,
+        line: Option<usize>,
+        message: String,
+    },
+    #[error("{}: not valid TOML for secrets, {}", .path.display(), at_line(.line))]
+    InvalidSecrets { path: PathBuf, line: Option<usize> },
+}
+
+/// "at line N", or "line unknown" when toml gives no position.
+fn at_line(line: &Option<usize>) -> String {
+    line.map_or("line unknown".to_string(), |line| format!("at line {line}"))
+}
+
+/// A startup rule the settings or secrets break (1. Proxy startup). It names the host, key or
+/// secret.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum StartupProblem {
+    #[error("host {host}: not a valid host[:port]")]
+    InvalidHost { host: String },
+    #[error("host {host}: listed more than once")]
+    HostListedTwice { host: String },
+    #[error("key {key}: its host isn't in the host list")]
+    KeyHostNotListed { key: String },
+    #[error("key {key}: malformed placeholder")]
+    MalformedPlaceholder { key: String },
+    #[error("key {key}: its placeholder is also key {other}'s")]
+    PlaceholderReused { key: String, other: String },
+    #[error("key {key}: bound to a header the proxy drops, writes, or reads for framing")]
+    ForbiddenHeader { key: String },
+    #[error("key {key}: no secret")]
+    NoSecret { key: String },
+    #[error("secret {secret}: no such key")]
+    SecretWithoutKey { secret: String },
+    #[error("secret {secret}: invalid value")]
+    InvalidSecret { secret: String },
 }

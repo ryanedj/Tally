@@ -116,7 +116,7 @@ The design, with the reason for each choice, is in [docs/DESIGN.md](docs/DESIGN.
 - [x] L0, setup: workspace, `.gitignore`, `CLAUDE.md`, `git init`, review skill
 - [x] L1: fake API
 - [x] L2: request and response parsers, with tables of tricky inputs
-- [ ] L3: loading settings and secrets, and deciding each request
+- [x] L3: loading settings and secrets, and deciding each request
 - [ ] L4: log writer; the log format is fixed from here on
 - [ ] L5: proxy loop, with connection-level smuggling tests
 - [ ] L6: fake program and end-to-end demo

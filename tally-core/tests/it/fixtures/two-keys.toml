@@ -1,0 +1,18 @@
+# Two hosts, two keys: the decide tests' example.
+client = "weather-app"
+listen_address = "127.0.0.1:8080"
+log_folder = "logs"
+
+[hosts]
+"api.weather.local:80" = "127.0.0.1:9001"
+"maps.local:8080" = "127.0.0.1:9002"
+
+[keys.weather_key]
+placeholder = "TALLY_0123456789abcdef0123456789abcdef"
+host = "api.weather.local:80"
+header = "Authorization"
+
+[keys.maps_key]
+placeholder = "TALLY_fedcba9876543210fedcba9876543210"
+host = "maps.local:8080"
+header = "X-Api-Key"

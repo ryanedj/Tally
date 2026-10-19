@@ -1,0 +1,12 @@
+# One host, one key: the settings tests' example.
+client = "weather-app"
+listen_address = "127.0.0.1:8080"
+log_folder = "logs"
+
+[hosts]
+"api.weather.local:80" = "127.0.0.1:9001"
+
+[keys.weather_key]
+placeholder = "TALLY_0123456789abcdef0123456789abcdef"
+host = "api.weather.local:80"
+header = "Authorization"

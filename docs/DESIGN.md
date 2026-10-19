@@ -49,7 +49,7 @@ I first meant to work everything out on my own, thinking it would teach me more.
 | nginx | The most common reverse proxy | The 1 MiB body limit; reading the whole body before contacting the server; reading and discarding what the client still sends before closing (`lingering_close`) |
 | Go's `net/http` and `httputil.ReverseProxy` | A server and a proxy with well-documented timeouts | Idle wait and head deadline; closing the write side before closing the connection; when a connection can be reused; graceful shutdown (close idle connections at once, finish active ones without keep-alive); `Connection: close` on every reply before a close; forwarding interim (`1xx`) responses; 502 when the server gives no usable response; an empty path sent as `/`; a response's `Connection` list read with its empty elements skipped; a head judged line by line, as each line arrives |
 | hyper | The HTTP library under most Rust servers | Strict defaults; status codes for oversized heads; the syntax checked before the meaning; a response's checks and where its body ends decided with its head |
-| Envoy | A proxy for service-to-service traffic, with a credential injector | Connect timeout; operator-chosen header for the credential |
+| Envoy | A proxy for service-to-service traffic, with a credential injector | Connect timeout; operator-chosen header for the credential; unknown fields in static config refused |
 | Pingora | Cloudflare's Rust proxy framework | Its security fixes, as a list of mistakes to avoid |
 | Smokescreen (Stripe) | An egress proxy that decides which hosts a program may reach | Per-decision logging; checking addresses, not names |
 | Fly.io's tokenizer | A proxy that adds secrets to requests from untrusted programs | The closest match to Tally: host allowlists per secret, no reuse of server connections, and the allowlist as its answer to a service that echoes secrets |
@@ -232,11 +232,32 @@ On `SIGTERM` or Ctrl-C, the proxy:
 - Settings file, which can be committed:
   - `client`: the program this proxy serves
   - listen address and log folder
-  - hosts, each as `host:port`, with the Server's address to connect to (e.g. `127.0.0.1:9001`)
+  - hosts, each as `host:port`, with the Server's address to connect to (e.g. `127.0.0.1:9001`). A host may be written in any spelling the parser accepts for a URL host, it's normalized to lowercase `host:port`, port written out.
   - keys, each with a name, a placeholder, an allowed host, and a bound header
 - Secrets file: real key values only, by key name.
+- Both files are TOML. Hosts and keys are tables keyed by name, so TOML itself refuses a name written twice, and a field the proxy doesn't know is refused too:
+  ```toml
+  # settings.toml
+  client = "weather-app"
+  listen_address = "127.0.0.1:8080"
+  log_folder = "logs"
+
+  [hosts]
+  "api.weather.local:80" = "127.0.0.1:9001"
+
+  [keys.weather_key]
+  placeholder = "TALLY_0123456789abcdef0123456789abcdef"
+  host = "api.weather.local:80"
+  header = "Authorization"
+  ```
+  ```toml
+  # secrets.toml
+  weather_key = "the-real-key"
+  ```
 - Command line: the paths of both files.
+- A file that can't be read or isn't valid stops the proxy, which says which file, which line and what was wrong but never prints the line as the two files could be swapped on the command line. For the secrets file, only the line, since even the message can quote a value (serde's ``invalid type: integer `12345` ``). For the settings file, what was wrong is toml's message: it names fields, but quotes a value of the wrong type, so a secrets file passed as the settings file would show a secret if a key is named `hosts` or `keys` (the two settings fields that expect a table).
 - Checked at startup. The proxy refuses to start if:
+  - a host isn't a valid `host[:port]`, or is listed twice once normalized
   - a key's host isn't in the host list
   - a placeholder has the wrong shape or is used twice
   - a key is bound to a header the proxy drops, writes itself, or reads for framing (`Host`, `Connection`, `Keep-Alive`, `TE`, `Proxy-*`, `Content-Length`, `Transfer-Encoding`)
@@ -272,7 +293,7 @@ On `SIGTERM` or Ctrl-C, the proxy:
 
 ### Tests
 
-- Unit tests: `#[cfg(test)] mod tests` inside source files, for checks and settings loading. The parser's tables are integration tests in `tally-core/tests/it/`, one module per topic, since they use only its public functions.
+- `tally-core`'s parser tables, settings checks and decisions are integration tests in `tally-core/tests/it/`, one module per topic, since they use only its public functions. Unit tests (`#[cfg(test)] mod tests` inside a source file) only for a private helper a public function can't reach.
 - Integration tests: one test binary per crate, `tests/it/main.rs`, with one module per topic.
 - Every parser test input also goes through `httparse` (a dev-dependency of `tally-core`; only the fake API uses it in its own code). Tally must never accept a head that `httparse` rejects.
 - One test per row of the exits tables, in [1. Proxy startup](protocols/1-proxy-startup.md), [4. One program connection](protocols/4-program-connection.md) and [6. Checker](protocols/6-checker.md): the exits of [2. Log writer](protocols/2-log-writer.md) are rows of the first table, and those of [5. Relay response](protocols/5-relay-response.md) rows of the second. And one test per case of [3. Decide request](protocols/3-decide-request.md).

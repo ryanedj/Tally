@@ -49,11 +49,12 @@ end rnote
 rnote over Proxy #ffffff
   // <latex>\scriptstyle H</latex> the listed hosts, <latex>\scriptstyle K</latex> the keys, <latex>\scriptstyle S</latex> the secrets by key name,
   // <latex>\scriptstyle \mathcal{P}</latex> the placeholder shape, <latex>\scriptstyle D</latex> the headers the proxy drops, writes, or reads for framing,
-  // <latex>\scriptstyle \mathcal{A}</latex> visible ASCII without space (a secret's length is bounded)
-  <latex>\scriptstyle \mathtt{ok} \iff \begin{array}{l} \forall k \in K,\ k.\mathtt{host} \in H \cr \wedge\ \forall k \in K,\ k.\mathtt{placeholder} \in \mathcal{P} \cr \wedge\ |\{k.\mathtt{placeholder} \mid k \in K\}| = |K| \cr \wedge\ \forall k \in K,\ k.\mathtt{header} \notin D \cr \wedge\ \mathrm{dom}(S) = \{k.\mathtt{name} \mid k \in K\} \cr \wedge\ \forall s \in \mathrm{ran}(S),\ s \in \mathcal{A}^{+} \end{array}</latex>
+  // <latex>\scriptstyle \mathcal{A}</latex> visible ASCII without space (a secret's length is bounded),
+  // <latex>\scriptstyle n(h)</latex> the host <latex>\scriptstyle h</latex> normalized to host:port by the Parser's rule (<latex>\scriptstyle \bot</latex> if it refuses <latex>\scriptstyle h</latex>)
+  <latex>\scriptstyle \mathtt{ok} \iff \begin{array}{l} \forall h \in H,\ n(h) \neq \bot \cr \wedge\ |n(H)| = |H| \cr \wedge\ \forall k \in K,\ n(k.\mathtt{host}) \in n(H) \cr \wedge\ \forall k \in K,\ k.\mathtt{placeholder} \in \mathcal{P} \cr \wedge\ |\{k.\mathtt{placeholder} \mid k \in K\}| = |K| \cr \wedge\ \forall k \in K,\ k.\mathtt{header} \notin D \cr \wedge\ \mathrm{dom}(S) = \{k.\mathtt{name} \mid k \in K\} \cr \wedge\ \forall s \in \mathrm{ran}(S),\ s \in \mathcal{A}^{+} \end{array}</latex>
 end rnote
 
-alt if <latex>\neg\,\mathtt{ok}</latex>
+alt if a file can't be read or parsed, or <latex>\neg\,\mathtt{ok}</latex>
 
   Proxy --> Op : why, then exit
 

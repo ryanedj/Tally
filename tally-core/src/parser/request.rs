@@ -183,3 +183,15 @@ pub fn parse_host_port(bytes: &[u8]) -> Result<(String, u16), ParseError> {
         .collect();
     Ok((host, port))
 }
+
+/// A host and its port as "host:port", the form the settings, the decisions and the log use.
+pub(crate) fn host_port(host: &str, port: u16) -> String {
+    format!("{host}:{port}")
+}
+
+/// A host as lowercase "host:port", by "parse_host_port", "None" if it refuses it.
+pub(crate) fn normalize_host(bytes: &[u8]) -> Option<String> {
+    parse_host_port(bytes)
+        .ok()
+        .map(|(host, port)| host_port(&host, port))
+}

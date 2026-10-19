@@ -4,7 +4,7 @@
 - `settings`: the checked settings file, as given to [4. One program connection](4-program-connection.md)
 - `request`: parsed request head, with header names in lowercase
 
-**Output:** `Release { keys, host }  |  Pass { keys, host }  |  Refuse(Refusal)`, where `Pass` always has empty `keys`
+**Output:** `Release { keys, host }  |  Pass { host }  |  Refuse(Refusal)`
 - `Refusal { reason, keys, host }`
 
 **Calls:** none.
@@ -42,7 +42,7 @@ function decide(request, settings):
 
     // Case 5: pass
     if keys_found is empty:
-        return Pass(keys_found, url_host)
+        return Pass(url_host)
 
     // Case 6: release
     return Release(keys_found, url_host)

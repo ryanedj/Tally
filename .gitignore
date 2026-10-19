@@ -5,3 +5,7 @@ notes/
 CLAUDE.local.md
 
 target/
+
+# A run's secrets and logs
+secrets.toml
+logs/

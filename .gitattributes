@@ -1,0 +1,2 @@
+# The tests change the fixtures by matching "\n", this keeps them LF on every checkout
+tally-core/tests/it/fixtures/*.toml text eol=lf

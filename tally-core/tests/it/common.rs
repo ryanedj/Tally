@@ -1,3 +1,6 @@
+use std::path::Path;
+use tally_core::{Secrets, Settings, check_settings, parse_secrets, parse_settings};
+
 // One test per row, like httparse's "req!" and "res!". A good row checks that the head ends
 // where "$bytes" ends (any "then" bytes come after it), that httparse agrees on its length,
 // and that every shorter piece of it is partial. A refused row checks for its exact error.
@@ -67,6 +70,16 @@ macro_rules! res {
 pub(crate) use req;
 pub(crate) use res;
 pub(crate) use row;
+
+/// Settings and secrets from TOML text, through every startup rule.
+pub fn checked(settings: &str, secrets: &str) -> (Settings, Secrets) {
+    let raw = parse_settings(settings.as_bytes(), Path::new("settings.toml"))
+        .expect("the settings parse");
+    let secrets =
+        parse_secrets(secrets.as_bytes(), Path::new("secrets.toml")).expect("the secrets parse");
+    let settings = check_settings(raw, &secrets).expect("the settings pass every startup rule");
+    (settings, secrets)
+}
 
 /// A head with "start_line" and "count" headers.
 pub fn head_with_headers(start_line: &[u8], count: usize) -> Vec<u8> {

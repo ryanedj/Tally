@@ -24,7 +24,7 @@
 - A `release` or `pass` line is always followed by a complete send to the Server, or by an `upstream_error` line, unless the log can't be written.
 - A refused request's body is never parsed or forwarded.
 - Nothing carries over from one request to the next except the unread bytes in `buffer`.
-- The proxy never retries. A retry by the program is a new request with its own line.
+- The proxy never retries, as retry by the program is a new request with its own line.
 
 ## Pseudo code
 
@@ -32,6 +32,7 @@ The [sequence diagram](4-program-connection.puml) is the reference. Each numbere
 
 ```text
 // Release, Pass and Refuse(Refusal) are the output of decide (see 3).
+// A Pass carries no keys: its decision.keys is empty.
 // A refusal's keys and host are empty when not known yet.
 // request.content_length is 0 when there's no Content-Length header.
 // request.wants_close is set when the program sent Connection: close.
@@ -77,7 +78,7 @@ function handle_connection(program, settings, secrets, writer, shutdown, cut_off
 
         // 5. Rewrite the request and swap each placeholder for its real key
         upstream_head = rewrite(request, decision, settings, secrets)   // (see DESIGN, Handling one request, steps 6 and 7)
-        server = connect(settings.address_of(decision.host))  // 5 s, never DNS
+        server = connect(settings.address_of(decision.host))  // 5 s
         if server is Error(reason):                           // connect_failed or connect_timeout; shutdown if cut off
             outcome = upstream_failed(program, writer, decision, reason, request, shutdown)
         else:
