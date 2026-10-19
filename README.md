@@ -2,7 +2,7 @@
 
 Tally is a proxy for sandboxed programs that need to call outside APIs. The program gets placeholders instead of the real API keys, and the proxy swaps a placeholder for its key only after writing its decision to a log on disk.
 
-Tally is a learning project.
+This project was created as a learning exercise and is not intended for production use.
 
 Status: the v1 design is done (last changed 2026-10-18), and the build has started: the fake API (L1) is written and tested.
 
