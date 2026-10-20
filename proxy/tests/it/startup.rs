@@ -1,5 +1,5 @@
 // 1. Proxy startup, one test per row of its exits table. The rows the operator can cause run the
-// real binary and check what it prints and its exit code. The rows a failing disk causes 
+// real binary and check what it prints and its exit code. The rows a failing disk causes
 // call "start_log" and "stop_log" with a "FailingFile".
 
 use crate::common::{CLIENT, FailingFile, Failure, RUN, log_lines, log_path};
