@@ -18,7 +18,7 @@ given this run's log file and the first line, the start line, both from startup 
 <latex>n</latex> the next line number, starting at 0
 end note
 
-group while the proxy runs, then on shutdown until the queue is empty
+group while the proxy runs, then on shutdown until the stop line
 
   Conns -> Writer : line <latex>L</latex>, through the queue
 
@@ -52,6 +52,12 @@ group while the proxy runs, then on shutdown until the queue is empty
     rnote over Writer #ffffff
       <latex>\scriptstyle n \leftarrow n + 1</latex>
     end rnote
+
+    opt if <latex>L.\mathtt{event} = \mathtt{stop}</latex>
+
+      Writer --> Conns : error, to every line after it
+
+    end
 
   else
 

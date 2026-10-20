@@ -1,4 +1,5 @@
 use crate::common::checked;
+use nonempty::NonEmpty;
 use tally_core::{Decision, Parsed, Refusal, RefuseReason, decide, parse_request_head};
 
 const SETTINGS: &str = include_str!("fixtures/two-keys.toml");
@@ -187,7 +188,7 @@ fn case_6_a_key_in_its_bound_header() {
     assert_eq!(
         decision(b"GET http://api.weather.local/ HTTP/1.1\r\nHost: api.weather.local\r\nAuthorization: Bearer TALLY_0123456789abcdef0123456789abcdef\r\n\r\n"),
         Decision::Release {
-            keys: vec!["weather_key".to_string()],
+            keys: NonEmpty::new("weather_key".to_string()),
             host: "api.weather.local:80".to_string()
         }
     );
@@ -198,7 +199,7 @@ fn a_bound_header_in_any_case() {
     assert_eq!(
         decision(b"GET http://api.weather.local/ HTTP/1.1\r\nHost: api.weather.local\r\nAUTHORIZATION: Bearer TALLY_0123456789abcdef0123456789abcdef\r\n\r\n"),
         Decision::Release {
-            keys: vec!["weather_key".to_string()],
+            keys: NonEmpty::new("weather_key".to_string()),
             host: "api.weather.local:80".to_string()
         }
     );
@@ -247,7 +248,7 @@ fn a_key_on_a_port_written_out() {
     assert_eq!(
         decision(b"GET http://maps.local:8080/tiles HTTP/1.1\r\nHost: maps.local:8080\r\nX-Api-Key: TALLY_fedcba9876543210fedcba9876543210\r\n\r\n"),
         Decision::Release {
-            keys: vec!["maps_key".to_string()],
+            keys: NonEmpty::new("maps_key".to_string()),
             host: "maps.local:8080".to_string()
         }
     );

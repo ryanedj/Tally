@@ -1,7 +1,9 @@
 use crate::error::ParseError;
+use serde::{Deserialize, Serialize};
 
-/// The reason a "refuse" line gives (DESIGN, Decisions and reasons).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The reason a "refuse" line gives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RefuseReason {
     IncompleteRequest,
     HeadTooLarge,
@@ -10,6 +12,19 @@ pub enum RefuseReason {
     HostMismatch,
     UnsupportedRequest,
     HostNotAllowed,
+}
+
+/// The reason an "upstream_error" line gives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpstreamReason {
+    ConnectFailed,
+    ConnectTimeout,
+    SendFailed,
+    Shutdown,
+    BadResponse,
+    ResponseTimeout,
+    ResponseIncomplete,
 }
 
 /// The reason a request gets when the parser refuses its head. Every variant is listed, so a new

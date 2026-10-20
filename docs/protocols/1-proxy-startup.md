@@ -17,6 +17,9 @@ The [sequence diagram](1-proxy-startup.puml) is the reference. Each numbered ste
 ```text
 function main(command_line):
     // 1. Load the settings and the secrets
+    if command_line doesn't give exactly two paths:
+        print(the usage)
+        exit(failure)
     settings_bytes = read_file(command_line.settings_path)
     settings       = parse_settings(settings_bytes)                 // TOML: a repeated name, an unknown field or a name for an address is an Error
     secrets        = parse_secrets(read_file(command_line.secrets_path))
@@ -35,18 +38,27 @@ function main(command_line):
         exit(failure)
 
     // 3. Prepare the start line
-    start_line = StartLine(run             = random_id(),
-                           settings_sha256 = sha256(settings_bytes))
+    run = random_id()                     // 16 random bytes from the operating system
+    if run is Error:
+        print(run.error)
+        exit(failure)
+    start_line = StartLine(run, settings_sha256 = sha256(settings_bytes))
 
     // 4. Create this run's log file
+    create_folder_if_missing(settings.log_folder)                                      // one level only
     log_file = create_new_file(settings.log_folder + "/" + start_line.run + ".jsonl")   // fails if it exists
     if log_file is Error:
         print(log_file.error)
         exit(failure)
     (writer, writer_queue) = bounded_queue()
-    log_failed = Flag()                   // set by the Writer if a line can't be written
+    log_failed = Flag()                   // set by the Writer if a line can't be written, or if it crashes
     writer_thread = start_thread(run_writer(log_file, writer_queue, settings.client, log_failed))   // calls 2
+    if writer_thread is Error:
+        print(writer_thread.error)
+        exit(failure)                     // the log file stays empty
     if writer.submit(start_line) is Error:                                             // calls 2
+        close(writer)
+        wait_for(writer_thread)           // the Writer prints its error first
         print("the log can't be written")
         exit(failure)
 
@@ -69,12 +81,15 @@ function main(command_line):
     cut_off.set()                         // the rest stop at their next wait (see 4)
     wait_for_all(connection_tasks)
     if event is LogFailed:
-        exit(failure)                     // the Writer printed the error; no stop line
-    if writer.submit(StopLine()) is Error:                                             // calls 2
+        close(writer)
+        wait_for(writer_thread)           // the Writer printed the error; no stop line
+        exit(failure)
+    stopped = writer.submit(StopLine())                                                // calls 2
+    close(writer)
+    wait_for(writer_thread)               // its error, if any, is printed before the exit
+    if stopped is Error:
         print("the log can't be written")
         exit(failure)
-    close(writer)
-    wait_for(writer_thread)
     exit(success)
 
 
@@ -116,14 +131,17 @@ function startup_problems(settings, secrets):
 
 ## Exits
 
-One row per way the proxy stops, and one test per row.
+One row per way the proxy stops, and one test per row, except the two only a refusing operating system can cause.
 
 | Exit | Printed | Log | Exit code |
 |---|---|---|---|
+| The command line doesn't give exactly two paths | the usage | nothing: the log file isn't created yet | failure |
 | The settings or secrets file can't be read, or isn't valid TOML for its shape | the file, the line and what was wrong | nothing: the log file isn't created yet | failure |
 | The settings or secrets break a startup rule | every problem, secrets by name only | nothing: the log file isn't created yet | failure |
-| This run's log file can't be created (for example, it already exists) | the error | nothing | failure |
-| The start line can't be written | "the log can't be written" | no complete start line | failure |
+| The operating system gives no random bytes for the run id (no test) | the error | nothing: the log file isn't created yet | failure |
+| This run's log file can't be created (for example, it already exists) | the error | nothing; an empty log file only if its folder can't be synced once the file exists | failure |
+| The operating system can't start the Writer's thread (no test) | the error | an empty log file | failure |
+| The start line can't be written | "the log can't be written" | no complete start line, or the start line if only its sync failed | failure |
 | Shutdown signal (`SIGTERM` or Ctrl-C) | nothing | the lines already queued, then the stop line | success |
-| The stop line can't be written | "the log can't be written" | no stop line | failure |
+| The stop line can't be written | "the log can't be written" | no stop line, or the stop line if only its sync failed | failure |
 | The log fails while the proxy runs | the error, printed by the Writer | no stop line | failure |

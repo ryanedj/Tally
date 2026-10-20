@@ -1,13 +1,14 @@
 use crate::parser::{RequestHead, host_port, normalize_host};
 use crate::reason::RefuseReason;
 use crate::settings::Settings;
+use nonempty::NonEmpty;
 
 /// What "decide" says about a request (3. Decide request).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
     /// At least one key found in its bound header, each allowed for this host.
     Release {
-        keys: Vec<String>,
+        keys: NonEmpty<String>,
         host: String,
     },
     /// No key found, and the host is listed.
@@ -76,15 +77,14 @@ pub fn decide(request: &RequestHead, settings: &Settings) -> Decision {
         return refuse(RefuseReason::HostNotAllowed);
     }
 
-    // Case 5: pass
-    if keys_found.is_empty() {
-        return Decision::Pass { host: url_host };
-    }
-
-    // Case 6: release
-    Decision::Release {
-        keys: names,
-        host: url_host,
+    match NonEmpty::from_vec(names) {
+        // Case 5: pass
+        None => Decision::Pass { host: url_host },
+        // Case 6: release
+        Some(keys) => Decision::Release {
+            keys,
+            host: url_host,
+        },
     }
 }
 

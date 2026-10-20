@@ -1,7 +1,7 @@
 # Tally
 A secure proxy that controls, logs, and audits API-key access from sandboxed programs.
 
-Status: v1 design done, last changed 2026-10-18. Build in progress.
+Status: v1 design done, last changed 2026-10-20. Build in progress.
 
 ## What Tally does
 
@@ -59,12 +59,15 @@ I first meant to work everything out on my own, thinking it would teach me more.
 | Schneier and Kelsey, *Secure Audit Logs to Support Computer Forensics* (1999) | A design for audit logs kept on a machine that may be taken over | One file per session, opened and closed by special entries; and the reason a crash and a cut end look the same without cryptography |
 | systemd-journald | Linux's system log service | After an unclean stop, a new file instead of appending to the old one |
 | PostgreSQL | A database that forces its write-ahead log to disk | Stop at once when a sync fails, never retry (`data_sync_retry` off) |
+| SQLite | An embedded database, tested against failing disks | No folder sync on Windows (`syncDir` is "Not used on win32"); I/O errors tested through a file layer that fails after a set number of operations |
+| W3C Trace Context | The standard ids of distributed traces | The run id: 16 random bytes, written as 32 lowercase hex characters |
+| tracing-appender | The non-blocking log writer of Rust's `tracing` | The Writer on a dedicated thread, waited for before the program exits and nothing is written after the shutdown message |
 
 ## Decisions
 
 ### The log
 
-- Each run has its own file. At startup the proxy creates it in the log folder, named after the run id (`<run>.jsonl`), and never appends to an existing file. *Why:* after a crash the last line can be torn, and a new run appending to that file would glue its start line onto it. One file per run, opened by a `start` line and closed by a `stop` line, is the design of Schneier and Kelsey's secure audit logs; journald also starts a new file after an unclean stop.
+- Each run has its own file. At startup the proxy creates it in the log folder (creating the folder too if it's missing, one level only), named after the run id (`<run>.jsonl`), and never appends to an existing file. *Why:* after a crash the last line can be torn, and a new run appending to that file would glue its start line onto it. One file per run, opened by a `start` line and closed by a `stop` line, is the design of Schneier and Kelsey's secure audit logs; journald also starts a new file after an unclean stop.
 - One JSON object per line, with these fields:
   - `seq`: the line's number in the run, counted by the Writer; `0` is the `start` line
   - `event`: `start`, `release`, `pass`, `refuse`, `upstream_error`, or `stop`
@@ -74,7 +77,7 @@ I first meant to work everything out on my own, thinking it would teach me more.
   - `reason`: on `refuse` and `upstream_error` only
   - `about`: on `upstream_error` only: the `seq` of the `release` or `pass` line it follows. *Why:* several connections log at once, so without it the checker can't tell which request failed.
   - `time`: for information only
-- A `start` line when the proxy starts, with `run` (a random id), `client`, and `settings_sha256` (a SHA-256 of the settings file's bytes, as on disk).
+- A `start` line when the proxy starts, with `run` (16 random bytes from the operating system, as 32 lowercase hex characters), `client`, and `settings_sha256` (a SHA-256 of the settings file's bytes, as on disk).
 - A `stop` line when the proxy shuts down cleanly, after every other line of the run. *Why:* without it, lines cut from the end of a run would leave no trace. With it, a cut end looks like a crash: both lack the `stop` line, and the checker flags both.
 - Ordering comes from `seq`, not `time`.
 - The secret never appears in the log.
@@ -91,14 +94,14 @@ Fields per event, besides `seq`, `event`, `client` and `time`, which every line 
 | `upstream_error` | `keys`, `host`, `about`, `reason` |
 | `stop` | none |
 
-Example:
+Example, as the proxy writes it (`event` comes first; the order of fields means nothing in JSON):
 ```
-{"seq":0,"event":"start","run":"8c1f0a3e9b7d4c62","client":"weather-app","settings_sha256":"9f2c…","time":"2026-09-26T10:15:00Z"}
-{"seq":1,"event":"release","client":"weather-app","keys":["weather_key"],"host":"api.weather.local:80","time":"2026-09-26T10:15:02Z"}
-{"seq":2,"event":"refuse","client":"weather-app","keys":["weather_key"],"host":"evil.local:80","reason":"host_not_allowed","time":"2026-09-26T10:15:09Z"}
-{"seq":3,"event":"refuse","client":"weather-app","keys":[],"host":null,"reason":"malformed_request","time":"2026-09-26T10:15:11Z"}
-{"seq":4,"event":"upstream_error","client":"weather-app","keys":["weather_key"],"host":"api.weather.local:80","about":1,"reason":"response_timeout","time":"2026-09-26T10:15:32Z"}
-{"seq":5,"event":"stop","client":"weather-app","time":"2026-09-26T18:00:00Z"}
+{"event":"start","seq":0,"run":"8c1f0a3e9b7d4c62a5e01f9d3b7c4e18","client":"weather-app","settings_sha256":"9f2c…","time":"2026-09-26T10:15:00Z"}
+{"event":"release","seq":1,"client":"weather-app","keys":["weather_key"],"host":"api.weather.local:80","time":"2026-09-26T10:15:02Z"}
+{"event":"refuse","seq":2,"client":"weather-app","keys":["weather_key"],"host":"evil.local:80","reason":"host_not_allowed","time":"2026-09-26T10:15:09Z"}
+{"event":"refuse","seq":3,"client":"weather-app","keys":[],"host":null,"reason":"malformed_request","time":"2026-09-26T10:15:11Z"}
+{"event":"upstream_error","seq":4,"client":"weather-app","keys":["weather_key"],"host":"api.weather.local:80","about":1,"reason":"response_timeout","time":"2026-09-26T10:15:32Z"}
+{"event":"stop","seq":5,"client":"weather-app","time":"2026-09-26T18:00:00Z"}
 ```
 
 ### The log writer
@@ -106,7 +109,9 @@ Example:
 - One writer owns the run's log file, created new at startup and only appended to. Connections send it their line and wait for its answer.
 - The Writer answers only once the line is on disk; the connection acts only after that answer.
 - Any write or sync error stops the proxy for good, without a retry. Waiting requests get `503`, or just a closed connection once their final response head was relayed. The error is printed, and the proxy exits with a failure: requests in progress are cut off at once, since nothing more can be logged, and there is no `stop` line. *Why:* after a failed sync, a retry can report success for lines that never reached the disk.
+- A line whose sync fails may still reach disk. If it is a `release` line, the checker reports a false positive: the key was never released, because the request is sent only after the answer. The run also lacks a `stop` line, so the checker flags it. By contrast, if the failed sync is on the `stop` line itself, the run appears clean even though the proxy exits with a failure. This does not affect the correctness of the log, since every preceding line was synced.
 - Lines wait in a queue of limited size, and are never dropped. When the queue is full, a connection waits for room before its line is even queued. A full queue doesn't stop the proxy.
+- The `stop` line is the run's last: once it's on disk, the Writer answers an error to any line after it and writes none of them. *Why:* the checker would flag a line after it, and a forgotten connection could otherwise hold the shutdown open. tracing-appender's worker also stops at its shutdown message.
 
 ### Shutdown
 
@@ -296,7 +301,8 @@ On `SIGTERM` or Ctrl-C, the proxy:
 - `tally-core`'s parser tables, settings checks and decisions are integration tests in `tally-core/tests/it/`, one module per topic, since they use only its public functions. Unit tests (`#[cfg(test)] mod tests` inside a source file) only for a private helper a public function can't reach.
 - Integration tests: one test binary per crate, `tests/it/main.rs`, with one module per topic.
 - Every parser test input also goes through `httparse` (a dev-dependency of `tally-core`; only the fake API uses it in its own code). Tally must never accept a head that `httparse` rejects.
-- One test per row of the exits tables, in [1. Proxy startup](protocols/1-proxy-startup.md), [4. One program connection](protocols/4-program-connection.md) and [6. Checker](protocols/6-checker.md): the exits of [2. Log writer](protocols/2-log-writer.md) are rows of the first table, and those of [5. Relay response](protocols/5-relay-response.md) rows of the second. And one test per case of [3. Decide request](protocols/3-decide-request.md).
+- One test per row of the exits tables, in [1. Proxy startup](protocols/1-proxy-startup.md), [4. One program connection](protocols/4-program-connection.md) and [6. Checker](protocols/6-checker.md): the exits of [2. Log writer](protocols/2-log-writer.md) are rows of the first table, and those of [5. Relay response](protocols/5-relay-response.md) rows of the second. And one test per case of [3. Decide request](protocols/3-decide-request.md). The exceptions are the rows only a refusing operating system can cause, which no test can trigger.
+- Startup's exits that the operator can cause are tested on the real `proxy` binary, for what it prints and its exit code, those a failing disk causes are tested in-process, with a log file that fails on purpose.
 - Smuggling tests: single-request cases in the parser tables (L2), connection-level cases in `proxy`'s tests (L5). A second round is optional.
 
 ### Fake API

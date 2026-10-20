@@ -20,9 +20,16 @@ unwrap_used = "warn"
 indexing_slicing = "warn"
 
 [workspace.dependencies]
-tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "time"] }
+tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "time", "sync"] }
+tokio-util = "0.7"
 httparse = "1"
 thiserror= "2"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+nonempty = { version = "0.12", features = ["serialize"] }
 toml = "1"
 sha2 = "0.11"
+jiff = { version = "0.2", default-features = false, features = ["std"] }
+getrandom = "0.4"
+tempfile = "3"
+tally-core = { path = "tally-core" }

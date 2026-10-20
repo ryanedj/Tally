@@ -93,6 +93,17 @@ fn at_line(line: &Option<usize>) -> String {
     line.map_or("line unknown".to_string(), |line| format!("at line {line}"))
 }
 
+/// Why a log line isn't valid.
+#[derive(Debug, thiserror::Error)]
+pub enum LogLineError {
+    /// Not JSON, an unknown event or reason, fields that don't match the event, or a "release"
+    /// with no keys.
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error("a pass line with keys")]
+    PassWithKeys,
+}
+
 /// A startup rule the settings or secrets break (1. Proxy startup). It names the host, key or
 /// secret.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

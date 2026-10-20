@@ -4,6 +4,7 @@ mod decide;
 mod fault_order;
 mod good_requests;
 mod good_responses;
+mod log;
 mod malformed_requests;
 mod reasons;
 mod refused_requests;

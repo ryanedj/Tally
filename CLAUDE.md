@@ -8,6 +8,7 @@ Tally is an experimental learning project, not a product: don't worry about back
 - The user writes the code (except tests). Help plan, explain, point to documentation and review; don't edit code unless asked.
 - Never guess. Check the documentation (Rust and crate docs, RFCs) before stating how something works, and say when something is unverified.
 - One decision at a time, in plain language, with 2–3 options and a recommendation.
+- Before offering options for any decision, design or code, check how established projects and the RFCs handle the case, and quote what was verified. Then weigh each option's pros and cons, and only then recommend one.
 
 ## Where things are
 

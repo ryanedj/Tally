@@ -1,5 +1,7 @@
 # Tally
 
+![CI](https://github.com/ryanedj/tally/actions/workflows/ci.yml/badge.svg)
+
 Tally is a proxy for sandboxed programs that need to call outside APIs. The program gets placeholders instead of the real API keys, and the proxy swaps a placeholder for its key only after writing its decision to a log on disk.
 
 This project was created as a learning exercise and is not intended for production use.
@@ -109,6 +111,13 @@ The design, with the reason for each choice, is in [docs/DESIGN.md](docs/DESIGN.
 | `checker/` | re-checks a log against the settings |
 | `docs/` | design and protocols |
 | `.claude/` | Claude Code settings and Tally's skills |
+| `.github/` | CI workflow |
+
+## Commits and CI
+
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `type(scope): description`, with the types `feat`, `fix`, `test`, `docs`, `refactor`, `ci` and `chore`. The scope is a crate name, left out when a change spans several crates.
+
+Each push and pull request to `main` runs `cargo fmt --check`, `cargo clippy --all-targets` and `cargo test`. A Clippy or compiler warning fails the run.
 
 ## Roadmap
 

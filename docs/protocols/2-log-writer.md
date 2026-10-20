@@ -2,9 +2,9 @@
 
 **Inputs:** given by [1. Proxy startup](1-proxy-startup.md):
 - `log_file`: this run's log file, newly created
-- `queue`: the receiving side of the queue the connections send their lines through. Its first line is the start line and its last the stop line.
+- `queue`: the receiving side of the queue the connections send their lines through. Its first line is the start line and its last the stop line (the Writer refuses any line after it).
 - `client`: from the settings
-- `log_failed`: set by the Writer when a line can't be written; [1. Proxy startup](1-proxy-startup.md) then stops the proxy at once
+- `log_failed`: set by the Writer when a line can't be written, or when it stops any other way than its queue closing (a crash); [1. Proxy startup](1-proxy-startup.md) then stops the proxy at once
 
 **Output:** an answer to each line: `OnDisk(seq)  |  Error`. The `seq` lets a connection point an `upstream_error` line back at its decision line (`about`).
 
@@ -39,6 +39,11 @@ function run_writer(log_file, queue, client, log_failed):
         if written is Ok:
             answer_to.send(OnDisk(next_seq))
             next_seq = next_seq + 1
+            if line is the stop line:     // the run's last, nothing after it is written
+                queue.close()
+                for (waiting_line, waiting_answer_to) in queue.take_all():
+                    waiting_answer_to.send(Error)
+                return
             continue
 
         // 4. Print the error, stop the proxy
