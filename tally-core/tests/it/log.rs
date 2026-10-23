@@ -147,7 +147,6 @@ fn refuse_reasons_are_written_as_in_design() {
         (RefuseReason::HeadTooLarge, "head_too_large"),
         (RefuseReason::BodyTooLarge, "body_too_large"),
         (RefuseReason::MalformedRequest, "malformed_request"),
-        (RefuseReason::HostMismatch, "host_mismatch"),
         (RefuseReason::UnsupportedRequest, "unsupported_request"),
         (RefuseReason::HostNotAllowed, "host_not_allowed"),
     ];
@@ -255,10 +254,10 @@ fn a_refuse_line_with_an_upstream_reason_is_refused() {
 #[test]
 fn an_upstream_error_line_with_a_refuse_reason_is_refused() {
     let message = json_error(
-        r#"{"event":"upstream_error","seq":5,"client":"weather-app","keys":[],"host":"api.weather.local:80","about":1,"reason":"host_mismatch","time":"2026-09-26T10:15:00Z"}"#,
+        r#"{"event":"upstream_error","seq":5,"client":"weather-app","keys":[],"host":"api.weather.local:80","about":1,"reason":"host_not_allowed","time":"2026-09-26T10:15:00Z"}"#,
     );
     assert!(
-        message.contains("unknown variant `host_mismatch`"),
+        message.contains("unknown variant `host_not_allowed`"),
         "{message}"
     );
 }

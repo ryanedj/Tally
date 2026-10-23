@@ -5,7 +5,7 @@ pub enum ParseError {
     // malformed_request (pass 1)
     /// A line ending that isn't "\r\n", or a lone "\r" or "\n".
     LineEnding,
-    /// An empty line before the start line.
+    /// An empty line before a status line (a request skips them).
     LeadingEmptyLine,
     /// A request line that doesn't split into three parts on single spaces, or a method
     /// outside the token set.

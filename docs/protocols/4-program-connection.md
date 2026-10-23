@@ -4,6 +4,7 @@
 - `settings`: the checked settings file: `client`, the hosts with their Server addresses, and the keys (name, placeholder, allowed host, bound header in lowercase). Read-only, shared by all connections.
 - `secrets`: the real key values, by key name. Only `rewrite` reads them.
 - `writer`: the way to hand a line to the [Writer](2-log-writer.md). The Writer adds `seq`, `client` and `time` itself.
+- `log_failed`: set by the Writer when the log fails. The connection that gets an Error answer sets it too, since the answer comes first (see `log_or_stop`).
 - `shutdown`: set by [1. Proxy startup](1-proxy-startup.md) when a shutdown signal arrives. A connection then finishes its current request and closes.
 - `cut_off`: set by [1. Proxy startup](1-proxy-startup.md) when the shutdown time limit is reached. The connection then stops at its next wait (see the rule at the top of the [pseudo code](#pseudo-code)).
 
@@ -14,7 +15,7 @@
 - [2. Log writer](2-log-writer.md), for every line, through `log_or_stop`
 - [5. Relay response](5-relay-response.md), at step 6, to pass the Server's answer back
 
-**Called by:** [1. Proxy startup](1-proxy-startup.md), at step 5, once per program connection, each in its own task.
+**Called by:** [1. Proxy startup](1-proxy-startup.md), at step 6, once per program connection, each in its own task.
 
 **Uses:** the [Parser](../DESIGN.md#parser), to read the request head.
 
@@ -46,7 +47,7 @@ The [sequence diagram](4-program-connection.puml) is the reference. Each numbere
 // close(program), stop this connection, no new line.
 // A connect or send cut off after its decision line logs upstream_error, shutdown first (step 5).
 
-function handle_connection(program, settings, secrets, writer, shutdown, cut_off):
+function handle_connection(program, settings, secrets, writer, log_failed, shutdown, cut_off):
     buffer = void                         // bytes read from the program but not handled yet; each read takes from it
 
     loop:
@@ -82,8 +83,8 @@ function handle_connection(program, settings, secrets, writer, shutdown, cut_off
         if server is Error(reason):                           // connect_failed or connect_timeout; shutdown if cut off
             outcome = upstream_failed(program, writer, decision, reason, request, shutdown)
         else:
-            sent = send(server, upstream_head, body)
-            if sent is Error(reason):                         // send_failed; shutdown if cut off
+            sent = send(server, upstream_head, body)          // each write gives up after 30 s without progress
+            if sent is Error(reason):                         // send_failed; response_timeout if stalled; shutdown if cut off
                 outcome = upstream_failed(program, writer, decision, reason, request, shutdown)
             else:
                 // 6. Relay the response
@@ -92,15 +93,16 @@ function handle_connection(program, settings, secrets, writer, shutdown, cut_off
 
         // 7. Keep the connection for the next request
         if outcome is Close:
-            close(program)                                    // leftover bytes are never handled
+            close_gently(program)                             // leftover bytes are never handled
             return
 
 
 function log_or_stop(program, writer, line, can_reply = true):
     answer = writer.submit(line)          // calls 2: waits until the line is on disk; Error if the queue is closed
     if answer is Error:
+        log_failed.set()                  // the Writer sets it only after answering
         if can_reply:                     // false once a final response head was relayed (see 5), or the program has closed
-            reply(program, 503, closing = true)
+            try_reply(program, 503, closing = true)   // tried once, never waited for: cut_off comes with the failure
         close(program)
         stop this connection              // the proxy stops (see 1)
     return answer.seq
@@ -135,6 +137,7 @@ function reply(program, status, closing, body = empty):
     send(program, head, body)
 
 
+// After every reply, unless the program has closed, a write to it gave up, or cut_off is set.
 function close_gently(program):
     stop writing to program
     read and discard what the program sends, for at most 1 s or 1 MiB
@@ -143,7 +146,7 @@ function close_gently(program):
 
 ## Exits
 
-One row per way out of a loop turn, and one test per row.
+One row per way out of a loop turn, and one test per row. "Sending to the Server fails" is tested on a stand-in for the Server's connection: over loopback, the system takes the whole request before a Server can break the connection.
 
 | Exit | Log line | Reply | Program connection |
 |---|---|---|---|
@@ -158,15 +161,15 @@ One row per way out of a loop turn, and one test per row.
 | Refused by `decide` | `refuse`, its reason | 400 or 403 | closed gently |
 | Program closes part-way through the body | `refuse`, `incomplete_request`, with keys and host | none | closed |
 | Body not complete within 30 s | `refuse`, `incomplete_request`, with keys and host | 408 | closed gently |
-| The log can't be written | none (printed by the Writer) | 503, unless a final response head was relayed | closed; the proxy stops |
-| The connection to the Server fails | `release`/`pass`, then `upstream_error`, `connect_failed` | 502 | open, unless `Connection: close` or a shutdown |
-| No connection within 5 s | `release`/`pass`, then `upstream_error`, `connect_timeout` | 504 | open, unless `Connection: close` or a shutdown |
-| Sending to the Server fails | `release`/`pass`, then `upstream_error`, `send_failed` | 502 | open, unless `Connection: close` or a shutdown |
-| Bad response, or the Server closes before the end of its head (see [5. Relay response](5-relay-response.md)) | `release`/`pass`, then `upstream_error`, `bad_response` | 502 | closed |
-| 30 s with nothing from the Server, before the final response head (see [5. Relay response](5-relay-response.md)) | `release`/`pass`, then `upstream_error`, `response_timeout` | 504 | open, unless `Connection: close` or a shutdown |
-| Response cut short: the Server closes or goes silent after the head (see [5. Relay response](5-relay-response.md)) | `release`/`pass`, then `upstream_error`, `response_incomplete` | none: the response stops | closed |
-| Response with a known length (`Content-Length`, `204`, `304`) | `release`/`pass` | relayed | open, unless `Connection: close` or a shutdown |
-| Chunked response, or no length | `release`/`pass` | relayed until the Server closes | closed |
+| The log can't be written | none (printed by the Writer) | 503 if the connection takes it at once, unless a final response head was relayed | closed; the proxy stops |
+| The connection to the Server fails | `release`/`pass`, then `upstream_error`, `connect_failed` | 502 | open, unless `Connection: close` or a shutdown, then closed gently |
+| No connection within 5 s | `release`/`pass`, then `upstream_error`, `connect_timeout` | 504 | open, unless `Connection: close` or a shutdown, then closed gently |
+| Sending to the Server fails | `release`/`pass`, then `upstream_error`, `send_failed` | 502 | open, unless `Connection: close` or a shutdown, then closed gently |
+| Bad response, or the Server closes before the end of its head (see [5. Relay response](5-relay-response.md)) | `release`/`pass`, then `upstream_error`, `bad_response` | 502 | closed gently |
+| 30 s with nothing from the Server before the final response head: it doesn't read the request, or doesn't answer (see [5. Relay response](5-relay-response.md)) | `release`/`pass`, then `upstream_error`, `response_timeout` | 504 | open, unless `Connection: close` or a shutdown, then closed gently |
+| Response cut short: the Server closes, breaks the connection, or goes silent after the head (see [5. Relay response](5-relay-response.md)) | `release`/`pass`, then `upstream_error`, `response_incomplete` | none: the response stops | closed gently |
+| Response with a known length (`Content-Length`, `204`, `304`) | `release`/`pass` | relayed | open, unless `Connection: close` or a shutdown, then closed gently |
+| Chunked response, or no length | `release`/`pass` | relayed until the Server closes | closed gently |
 | Program stops reading for 30 s | `release`/`pass` | cut off | closed |
 | Shutdown time limit while connecting or sending to the Server | `release`/`pass`, then `upstream_error`, `shutdown` | none | closed |
 | Shutdown time limit at any other wait | nothing new | none | closed |

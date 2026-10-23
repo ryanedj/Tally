@@ -17,3 +17,7 @@ getrandom.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+fake-api.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+nix.workspace = true

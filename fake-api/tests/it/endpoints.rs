@@ -149,6 +149,16 @@ async fn redirect_points_to_another_host() {
 }
 
 #[tokio::test]
+async fn extra_after_body_sends_a_second_response_past_its_length() {
+    let (addr, _seen) = start().await;
+    let reply = exchange(addr, &get("/extra-after-body")).await;
+    assert_eq!(
+        reply,
+        b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\nokHTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 8\r\n\r\nsmuggled"
+    );
+}
+
+#[tokio::test]
 async fn an_unknown_path_is_a_404() {
     let (addr, _seen) = start().await;
     let reply = exchange(addr, &get("/nothing-here")).await;

@@ -1,7 +1,7 @@
 # Tally
 A secure proxy that controls, logs, and audits API-key access from sandboxed programs.
 
-Status: v1 design done, last changed 2026-10-20. Build in progress.
+Status: v1 design done, last changed 2026-10-23. Build in progress.
 
 ## What Tally does
 
@@ -23,7 +23,7 @@ What I want to learn in v1:
 What v1 must do:
 - Everything runs locally: a fake API, a fake program, the proxy, a log file, and a checker.
 - A key is released only toward its allowed host, and only after its log line is on disk.
-- Every request the proxy starts reading gets exactly one decision in the log, unless the log can't be written (then the proxy stops) or a shutdown cuts the request off before its line (then nothing was sent). Refusals carry a reason.
+- Every request the proxy starts reading gets exactly one decision in the log, unless the log can't be written or stops answering (then the proxy stops) or a shutdown cuts the request off before its line (then nothing was sent). Refusals carry a reason.
 - The checker can flag any logged release that broke the rules.
 
 ## v1 non-goals
@@ -46,34 +46,38 @@ I first meant to work everything out on my own, thinking it would teach me more.
 
 | Source | What it is | What Tally takes from it |
 |---|---|---|
-| nginx | The most common reverse proxy | The 1 MiB body limit; reading the whole body before contacting the server; reading and discarding what the client still sends before closing (`lingering_close`) |
-| Go's `net/http` and `httputil.ReverseProxy` | A server and a proxy with well-documented timeouts | Idle wait and head deadline; closing the write side before closing the connection; when a connection can be reused; graceful shutdown (close idle connections at once, finish active ones without keep-alive); `Connection: close` on every reply before a close; forwarding interim (`1xx`) responses; 502 when the server gives no usable response; an empty path sent as `/`; a response's `Connection` list read with its empty elements skipped; a head judged line by line, as each line arrives |
+| nginx | The most common reverse proxy | The 1 MiB body limit; reading the whole body before contacting the server; reading and discarding what the client still sends before closing, after every reply it closes after (`lingering_close always`; the default `on` waits only when a heuristic says the client may still send); a limit on the time between two writes to the server, answered with 504 (`proxy_send_timeout`) |
+| Go's `net/http` and `httputil.ReverseProxy` | A server and a proxy with well-documented timeouts | `Serve` on a listener already bound, with the shutdown left to the caller; time limits the caller sets; a failing connection to the server tested on a stand-in (`failingRoundTripper`); idle wait and head deadline; closing the write side before closing the connection; when a connection can be reused; graceful shutdown (close idle connections at once, finish active ones without keep-alive); `Connection: close` on every reply before a close; forwarding interim (`1xx`) responses; 502 when the server gives no usable response; an empty path sent as `/`; a response's `Connection` list read with its empty elements skipped; a head judged line by line, as each line arrives; a `Host` header ignored when the URL gives the host |
+| Apache httpd | `mod_proxy` is one of the oldest proxies | A lingering close on every connection it closes (2 s per read, 30 s at most) |
 | hyper | The HTTP library under most Rust servers | Strict defaults; status codes for oversized heads; the syntax checked before the meaning; a response's checks and where its body ends decided with its head |
+| axum | A Rust web framework built on hyper | A `serve` function taking a listener already bound and a shutdown future (`with_graceful_shutdown`), so tests run it in-process; an accept error retried after 1 s, inside the wait that also watches the shutdown |
 | Envoy | A proxy for service-to-service traffic, with a credential injector | Connect timeout; operator-chosen header for the credential; unknown fields in static config refused |
-| Pingora | Cloudflare's Rust proxy framework | Its security fixes, as a list of mistakes to avoid |
+| Pingora | Cloudflare's Rust proxy framework | Its security fixes, as a list of mistakes to avoid; refusing a `Connection` header that names a header the proxy relies on |
 | Smokescreen (Stripe) | An egress proxy that decides which hosts a program may reach | Per-decision logging; checking addresses, not names |
-| Fly.io's tokenizer | A proxy that adds secrets to requests from untrusted programs | The closest match to Tally: host allowlists per secret, no reuse of server connections, and the allowlist as its answer to a service that echoes secrets |
-| iron-proxy | An egress proxy that swaps proxy tokens from a sandbox for real secrets | Swapping a token only where it's configured to go: headers by default, the URL only on request, since URLs end up in access logs |
+| Fly.io's tokenizer | A proxy that adds secrets to requests from untrusted programs | The closest match to Tally: host allowlists per secret, no reuse of server connections, and the allowlist as its answer to a service that echoes secrets; a secret kept out of query strings, which end up in access logs more often than headers |
+| iron-proxy | An egress proxy that swaps proxy tokens from a sandbox for real secrets | Swapping a token only where it's configured to go: headers by default, the URL only on request |
 | RFC 6750 (OAuth 2.0 bearer tokens) | How a client sends a bearer token | Keep keys out of URLs, since URLs end up in logs (§2.3, §5.3) |
-| `httparse` | Rust's strict HTTP/1 head parser | A cross-check for Tally's own parser in tests; the parser's shape (the bytes read so far, read again from the start, give a partial head, a complete one, or an error); one named test per table row |
-| Schneier and Kelsey, *Secure Audit Logs to Support Computer Forensics* (1999) | A design for audit logs kept on a machine that may be taken over | One file per session, opened and closed by special entries; and the reason a crash and a cut end look the same without cryptography |
+| RFC 3986 (URIs) | The syntax of URLs | The `Host` the proxy writes leaves out the default port (§3.2.3) |
+| `httparse` | Rust's strict HTTP/1 head parser | A cross-check for Tally's own parser in tests; the parser's shape (the bytes read so far, read again from the start, give a partial head, a complete one, or an error); one named test per table row; empty lines before a request line skipped and counted in the head's length |
+| Schneier and Kelsey, *Secure Audit Logs to Support Computer Forensics* (1999) | A design for audit logs kept on a machine that may be taken over | A log opened and closed by special entries; and the reason a crash and a cut end look the same without cryptography |
 | systemd-journald | Linux's system log service | After an unclean stop, a new file instead of appending to the old one |
-| PostgreSQL | A database that forces its write-ahead log to disk | Stop at once when a sync fails, never retry (`data_sync_retry` off) |
+| PostgreSQL | A database that forces its write-ahead log to disk | Stop at once when a sync fails, never retry (`data_sync_retry` off); bind the listen address before announcing the server ready; still try to tell the client when the server must stop (`quickdie`), without waiting long |
 | SQLite | An embedded database, tested against failing disks | No folder sync on Windows (`syncDir` is "Not used on win32"); I/O errors tested through a file layer that fails after a set number of operations |
 | W3C Trace Context | The standard ids of distributed traces | The run id: 16 random bytes, written as 32 lowercase hex characters |
-| tracing-appender | The non-blocking log writer of Rust's `tracing` | The Writer on a dedicated thread, waited for before the program exits and nothing is written after the shutdown message |
+| tracing-appender | The non-blocking log writer of Rust's `tracing` | The Writer on a dedicated thread, waited for within a time limit before the program exits, and nothing written after the shutdown message |
+| tokio's shutdown guide | How tokio programs shut down | The shutdown and the cut-off as cancellation tokens; connection tasks tracked with tokio-util's `TaskTracker`, which frees each task as it ends |
 
 ## Decisions
 
 ### The log
 
-- Each run has its own file. At startup the proxy creates it in the log folder (creating the folder too if it's missing, one level only), named after the run id (`<run>.jsonl`), and never appends to an existing file. *Why:* after a crash the last line can be torn, and a new run appending to that file would glue its start line onto it. One file per run, opened by a `start` line and closed by a `stop` line, is the design of Schneier and Kelsey's secure audit logs; journald also starts a new file after an unclean stop.
+- Each run has its own file. At startup the proxy creates it in the log folder (creating the folder too if it's missing, one level only), named after the run id (`<run>.jsonl`), and never appends to an existing file. *Why:* after a crash the last line can be torn, and a new run appending to that file would glue its start line onto it. A log opened by a `start` line and closed by a `stop` line is the design of Schneier and Kelsey's secure audit logs; starting a new file after an unclean stop, instead of appending to the old one, is journald's.
 - One JSON object per line, with these fields:
   - `seq`: the line's number in the run, counted by the Writer; `0` is the `start` line
   - `event`: `start`, `release`, `pass`, `refuse`, `upstream_error`, or `stop`
   - `client`: the program the proxy serves
-  - `keys`: the names of the keys whose placeholder is in their bound header (empty when there are none)
-  - `host`: where the request is going, lowercase, as `host:port` (`null` when the request couldn't be read that far)
+  - `keys`: the names of the keys whose placeholder is in their bound header (empty when there are none, or when the request was refused before they were looked for)
+  - `host`: where the request is going, lowercase, as `host:port` (`null` when the request was refused before its destination was checked: its head stopped arriving, or the parser refused it, even after reading the URL)
   - `reason`: on `refuse` and `upstream_error` only
   - `about`: on `upstream_error` only: the `seq` of the `release` or `pass` line it follows. *Why:* several connections log at once, so without it the checker can't tell which request failed.
   - `time`: for information only
@@ -108,7 +112,7 @@ Example, as the proxy writes it (`event` comes first; the order of fields means 
 
 - One writer owns the run's log file, created new at startup and only appended to. Connections send it their line and wait for its answer.
 - The Writer answers only once the line is on disk; the connection acts only after that answer.
-- Any write or sync error stops the proxy for good, without a retry. Waiting requests get `503`, or just a closed connection once their final response head was relayed. The error is printed, and the proxy exits with a failure: requests in progress are cut off at once, since nothing more can be logged, and there is no `stop` line. *Why:* after a failed sync, a retry can report success for lines that never reached the disk.
+- Any write or sync error stops the proxy for good, without a retry. Waiting requests get `503` if their connection takes it at once (the cut-off below doesn't wait for it), or just a closed connection once their final response head was relayed. The error is printed, and the proxy exits with a failure: requests in progress are cut off at once, since nothing more can be logged, and there is no `stop` line. *Why:* after a failed sync, a retry can report success for lines that never reached the disk.
 - A line whose sync fails may still reach disk. If it is a `release` line, the checker reports a false positive: the key was never released, because the request is sent only after the answer. The run also lacks a `stop` line, so the checker flags it. By contrast, if the failed sync is on the `stop` line itself, the run appears clean even though the proxy exits with a failure. This does not affect the correctness of the log, since every preceding line was synced.
 - Lines wait in a queue of limited size, and are never dropped. When the queue is full, a connection waits for room before its line is even queued. A full queue doesn't stop the proxy.
 - The `stop` line is the run's last: once it's on disk, the Writer answers an error to any line after it and writes none of them. *Why:* the checker would flag a line after it, and a forgotten connection could otherwise hold the shutdown open. tracing-appender's worker also stops at its shutdown message.
@@ -117,16 +121,18 @@ Example, as the proxy writes it (`event` comes first; the order of fields means 
 
 On `SIGTERM` or Ctrl-C, the proxy:
 1. stops accepting new program connections;
-2. closes the connections waiting for their next request at once; lets the requests in progress finish, with `Connection: close` on their response, then closes their connections;
+2. closes the connections waiting for their next request at once; lets the requests in progress finish, with `Connection: close` on their response when its head is relayed after the signal, then closes their connections;
 3. after 5 s, cuts off whatever is left: a request still connecting or sending to the Server, after its `release` or `pass` line, logs `upstream_error`, `shutdown`; every other connection just closes;
-4. once every connection is done and the Writer has answered every queued line, logs the `stop` line, the run's last, and exits.
+4. once every connection is done and the Writer has answered every queued line, logs the `stop` line, the run's last, and exits. If this end of the run takes more than 4 s after the cut-off (a stuck disk), it prints that the log didn't answer in time and exits with a failure and no `stop` line, without waiting any longer.
 
-*Why:* Docker sends `SIGKILL` 10 s after `SIGTERM`. A request whose line wasn't written by then had nothing sent, so the log is still correct. A request whose line was written but whose send was cut off gets its `upstream_error`, so every `release` still ends in a send or a recorded failure.
+*Why:* Docker sends `SIGKILL` 10 s after `SIGTERM`. A request whose line wasn't written by then had nothing sent, so the log is still correct. A request whose line was written but whose send was cut off gets its `upstream_error`, so every `release` still ends in a send or a recorded failure. The 4 s limit is needed because a connection's wait for its line is never cut off: without it, a stuck disk would hold the proxy forever. 5 s and 4 s stay under Docker's 10 s. Giving up leaves the log correct too, since no request is sent before its line is answered, and the missing `stop` line makes the checker flag the run like a crash. tracing-appender also waits for its worker only for a limited time. The `start` line, at startup, has no such limit yet.
+
+A connection that panics ends the run like a crash: the proxy shuts down as on a signal, then exits with a failure and no `stop` line, so the checker flags the run. No key can leave without its line either way, since the line is written before the send; but a panic after a `release` line leaves neither a send nor an `upstream_error`. *Why:* Tally isn't for production, and I want to know what happens if something makes it panic. A server meant for production would normally isolate the panic to its connection instead, as Go's `net/http` does ("assumes that the effect of the panic was isolated to the active request").
 
 ### Handling one request
 
 1. Parse the request head with the strict parser (see [Parser](#parser)).
-2. Where is it going? Only the full-URL form is accepted: `GET http://host[:port]/path?query HTTP/1.1`, which is what programs send to a proxy. The URL's host and the single `Host` header must agree, compared case-insensitively, with `:80` added when the port is missing. Otherwise: `host_mismatch`.
+2. Where is it going? Only the full-URL form is accepted: `GET http://host[:port]/path?query HTTP/1.1`, which is what programs send to a proxy. The destination is the URL's host, with `:80` added when the port is missing. The request must also carry exactly one `Host` header, with a valid `host[:port]` value; otherwise: `malformed_request`. A `Host` naming another host is ignored, and the Server gets the proxy's own `Host`, from the URL (step 7). *Why:* RFC 9112 §3.2.2: a proxy "MUST ignore the received Host header field (if any) and instead replace it with the host information of the request-target", as Go and nginx do; and §3.2 requires a 400 for no `Host`, several, or an invalid one.
 3. Find the keys, and check them. Each key is bound to one header in the settings (e.g. `Authorization`), and counts only when its placeholder appears in that header. The same text anywhere else (the URL, another header, the body) is forwarded unchanged: only bound headers are swapped, and a placeholder isn't secret. A key that isn't allowed for this host is `host_not_allowed`, and the whole request is refused with one reason: the first that applies, in the order of [3. Decide request](protocols/3-decide-request.md). *Why:* a half-swapped request would send one key while refusing another.
 4. No key at all: the request is forwarded only to a host listed in the settings, and logged as `pass`. Any other host: `host_not_allowed`.
 5. Read the whole body before logging a `release` or `pass` (at most 1 MiB, within 30 s). The decision uses the head alone; the body only has to arrive in full. A refused request's body is never parsed or forwarded. *Why:* a `release` line must always be followed by a real send, or by an `upstream_error`. If the proxy logged first, a program that sends the head and then stalls would leave a `release` for a request that was never sent.
@@ -139,7 +145,7 @@ On `SIGTERM` or Ctrl-C, the proxy:
    - The program's `Connection` header may only say `close` or `keep-alive`; anything else is `unsupported_request`, checked with the head at step 1. *Why:* a header named in `Connection` would be dropped here, after the decision. With `Connection: Authorization`, the log would say a key was released when it was never sent.
    - The Server's address comes from the settings, never from DNS.
    - *Why:* the Server must see exactly the request the proxy checked, and a DNS lookup could send a checked name to an unchecked address.
-8. Refusal replies: status code and reason as in the table below, then the connection is closed gently. The proxy stops writing, then reads and discards what the program already sent, for at most 1 s or 1 MiB, before closing. *Why:* closing with unread data can make the operating system send a reset that erases the reply before the program reads it (RFC 9112 §9.6). When the program has already closed its side, there is nobody to reply to: the line is logged and the connection closed.
+8. Refusal replies: status code and reason as in the table below. Every reply the connection closes after, a refusal or any other, is followed by a gentle close: the proxy stops writing, then reads and discards what the program already sent, for at most 1 s or 1 MiB, before closing. The close is immediate only when the program has already closed its side, has stopped reading, or the shutdown's time limit is reached. *Why:* closing with unread data can make the operating system send a reset that erases the reply before the program reads it (RFC 9112 §9.6), and the program may have sent its next request already. Apache httpd also closes every connection this way, as nginx does with `lingering_close always` (its default waits only when a heuristic says the client may still be sending). When the program has already closed its side, there is nobody to reply to: the line is logged and the connection closed.
 
 ### Decisions and reasons
 
@@ -150,8 +156,7 @@ On `SIGTERM` or Ctrl-C, the proxy:
 | `refuse`, `incomplete_request` | The head or the body stopped arriving: timed out, or the program closed part-way | 408 on a timeout; none if the program closed |
 | `refuse`, `head_too_large` | A head over 8 KiB, or more than 100 headers | 431 |
 | `refuse`, `body_too_large` | A `Content-Length` over 1 MiB, refused before any body is read | 413 |
-| `refuse`, `malformed_request` | Anything else outside the strict subset, including a short-form (`/path`) target, or the bound header of a key found appearing more than once (RFC 9110 §5.3) | 400 |
-| `refuse`, `host_mismatch` | URL host and `Host` disagree, or zero or several `Host` headers | 400 |
+| `refuse`, `malformed_request` | Anything else outside the strict subset, including a short-form (`/path`) target, the bound header of a key found appearing more than once (RFC 9110 §5.3), or no `Host`, several, or one whose value isn't a valid `host[:port]` (RFC 9112 §3.2) | 400 |
 | `refuse`, `unsupported_request` | Valid HTTP that v1 doesn't handle: `Transfer-Encoding`, `Upgrade`, `Expect`, HTTP/1.0, a scheme other than `http`, a `Connection` header other than one line with a single `close` or `keep-alive`, methods other than `GET`, `POST`, `PUT`, `PATCH`, `DELETE` | 501 |
 | `refuse`, `host_not_allowed` | A key found isn't allowed for this host, or no key is found and the host isn't listed | 403 |
 | `upstream_error`, `connect_failed` | The connection to the Server failed | 502 |
@@ -159,9 +164,9 @@ On `SIGTERM` or Ctrl-C, the proxy:
 | `upstream_error`, `send_failed` | The connection broke while sending the request | 502 |
 | `upstream_error`, `shutdown` | The shutdown time limit cut off the connect or the send; some bytes may have reached the Server | none, connection closed |
 | `upstream_error`, `bad_response` | The Server's response stops before the end of its head, or breaks the strict rules (see [Responses](#responses)) | 502 |
-| `upstream_error`, `response_timeout` | 30 s with nothing from the Server, before the final response head | 504 |
-| `upstream_error`, `response_incomplete` | The Server closes before the announced length, or goes silent for 30 s, after the final head was relayed | none, connection closed |
-| *(not logged)* | The log itself can't be written | 503 if no final head was relayed, then the proxy exits |
+| `upstream_error`, `response_timeout` | 30 s with nothing from the Server before the final response head: it doesn't read the request, or doesn't answer | 504 |
+| `upstream_error`, `response_incomplete` | The Server closes before the announced length, breaks the connection, or goes silent for 30 s, after the final head was relayed | none, connection closed |
+| *(not logged)* | The log itself can't be written | 503 if no final head was relayed and the connection takes it at once, then the proxy exits |
 
 ### Placeholders
 
@@ -176,7 +181,7 @@ On `SIGTERM` or Ctrl-C, the proxy:
   - a line ending that isn't `\r\n`, or a lone `\r` or `\n` anywhere
   - a request line that isn't `METHOD target VERSION` with exactly one space between the parts, or a version other than `HTTP/1.1` (`HTTP/1.0` is refused as `unsupported_request` instead)
   - a status line that isn't `HTTP/1.1`, a code from 100 to 599, and a reason phrase that may be empty, with one space between each (RFC 9112 §4, RFC 9110 §15)
-  - an empty line before the request line, or whitespace between it and the first header
+  - whitespace between the request line and the first header; an empty line before a status line
   - a header name with characters outside the token set (RFC 9110 §5.6.2), or a space before the colon
   - a header continued on the next line
   - control characters other than tab in a header value
@@ -185,17 +190,17 @@ On `SIGTERM` or Ctrl-C, the proxy:
   - a URL host with user info (`user@`), a trailing dot, percent-encoding, or characters other than letters, digits, `-` and `.`
   - an empty host, a port with characters other than digits, or a port of 0 or over 65535
   - a path or query with characters RFC 3986 doesn't allow there (§3.3, §3.4), a `%` not followed by two hex digits, or a `#`
-- Accepted as the RFCs allow: the scheme `http` in any case (RFC 3986 §3.1); an empty path, sent as `/` (RFC 9112 §3.2.1); an empty port, which means 80, and leading zeros in a port (RFC 9110 §4.2.1); a tab inside a header value and bytes 0x80 to 0xFF, kept as they are, while spaces and tabs around a value are dropped (RFC 9110 §5.5).
+- Accepted as the RFCs allow: empty lines (`\r\n`) before a request line, which belong to its head: they count toward its 8 KiB, and the first of them starts its time limit (RFC 9112 §2.2; httparse and nginx skip them too); the scheme `http` in any case (RFC 3986 §3.1); an empty path, sent as `/` (RFC 9112 §3.2.1); an empty port, which means 80 (RFC 9110 §4.2.1), and leading zeros in a port (RFC 3986 §3.2.3); a tab inside a header value and bytes 0x80 to 0xFF, kept as they are, while spaces and tabs around a value are dropped (RFC 9110 §5.5).
 - Refused with their own reasons: `head_too_large`, `body_too_large` and `unsupported_request`; see the table above.
 
 ### Timeouts
 
 - 30 s of silence before a request's first byte: the connection is closed, with no reply and no line (RFC 9112 §9.5 lets either side close an idle connection).
-- 10 s for the whole head, counted from its first byte: `incomplete_request`. A program sending one byte at a time can't stretch it.
+- 10 s for the whole head, counted from its first byte, or from when the proxy turns to it if it was already waiting in the buffer, as Go's `ReadHeaderTimeout` does: `incomplete_request`. A program sending one byte at a time can't stretch it.
 - 30 s for the whole body: `incomplete_request`.
 - 5 s to connect to the Server: `connect_timeout`.
 - 30 s without progress on a write to the program (the program stopped reading): the connection is closed. No new line: the request already has its line.
-- 30 s with nothing from the Server while waiting for or relaying its response: `response_timeout` before the final head, `response_incomplete` after it.
+- 30 s with nothing from the Server: a write of the request that makes no progress, or no byte of its response while waiting for or relaying it: `response_timeout` before the final head, `response_incomplete` after it. nginx's `proxy_send_timeout` also limits the time between two writes to the server, and answers its expiry with a 504.
 
 ### Bodies and connections
 
@@ -209,7 +214,7 @@ On `SIGTERM` or Ctrl-C, the proxy:
 
   Otherwise the connection closes. So it stays open after `connect_failed`, `connect_timeout`, `send_failed` and `response_timeout`, and closes after every refusal, after `bad_response` and after `response_incomplete`.
 - Every reply to the program, relayed or the proxy's own, carries `Connection: close` when the proxy will close the connection after it, and no `Connection` header otherwise. *Why:* RFC 9112 §9.6: "A sender SHOULD send a Connection header field … containing the 'close' connection option when it intends to close a connection."
-- Once the proxy has decided to close, it never handles the bytes left in the buffer, even a complete next request. They get no line. *Why:* RFC 9112 §9.6: after a close, the server must not process further requests on that connection; the program is expected to send them again.
+- Once the proxy has decided to close, it never handles the bytes left in the buffer, even a complete next request. They get no line. *Why:* RFC 9112 §9.6: after a close, the server must not process further requests on that connection; the program "SHOULD NOT assume that they will be processed".
 - Toward the Server: one new connection per request, with `Connection: close`. *Why:* keeping connections open means the proxy must always know exactly where each request ends. Any doubt is a smuggling risk, so every unclear case ends the connection.
 
 ### Responses
@@ -224,12 +229,12 @@ On `SIGTERM` or Ctrl-C, the proxy:
   - is a `1xx` or a `204` with `Content-Length` or `Transfer-Encoding`, which a server must not send (RFC 9110 §8.6, RFC 9112 §6.1): both end with their head
   - has both `Content-Length` and `Transfer-Encoding`
   - has an invalid `Content-Length`
-  - has a `Connection` header naming `content-length` or `transfer-encoding`. *Why:* RFC 9110 §7.6.1 forbids it, and since the body is relayed unchanged, dropping either header would change where the program thinks the response ends.
+  - has a `Connection` header naming `content-length` or `transfer-encoding`. *Why:* RFC 9110 §7.6.1 asks a proxy to remove every header `Connection` names, but the body is relayed unchanged, so removing either one would change where the program thinks the response ends. Go's ReverseProxy, Pingora and Apache httpd can remove them because they re-frame the body. Refusing follows Pingora, which refuses a `Connection` header naming a header it relies on.
 - Where the response ends (RFC 9112 §6.3):
   - `204` and `304`: at the end of the head; there is no body.
   - With `Content-Length`: after exactly that many bytes. The program's connection can stay open (see [Bodies and connections](#bodies-and-connections)).
   - Chunked, or no length: the proxy relays until the Server closes, then closes the program's connection too.
-- A response cut short (the Server closes or goes silent before all `Content-Length` bytes arrive): both connections are closed without finishing the response, and `upstream_error`, `response_incomplete` is logged. The program receives fewer bytes than announced, so it knows the response is incomplete (RFC 9112 §6.3, §8). A chunked or length-less response is relayed until the Server closes, without reading its framing, so the proxy can't tell a cut-short one from a complete one; it only notices silence.
+- A response cut short (the Server closes or goes silent before all `Content-Length` bytes arrive): both connections are closed without finishing the response, and `upstream_error`, `response_incomplete` is logged. The program receives fewer bytes than announced, so it knows the response is incomplete (RFC 9112 §6.3, §8). A chunked or length-less response is relayed until the Server closes, without reading its framing, so the proxy can't tell a cut-short one from a complete one; it only notices silence, or a connection that breaks (a reset): RFC 9112 §8 counts such a response complete "unless an error was indicated by the underlying connection".
 - On a relayed head, the proxy drops `connection`, the headers it names, `keep-alive` and every `proxy-*` header, then writes its own `Connection` header by the rule in [Bodies and connections](#bodies-and-connections). It keeps `content-length` and `transfer-encoding`: the body is relayed unchanged, so its framing must stay.
 
 ### Settings and secrets
@@ -301,7 +306,7 @@ On `SIGTERM` or Ctrl-C, the proxy:
 - `tally-core`'s parser tables, settings checks and decisions are integration tests in `tally-core/tests/it/`, one module per topic, since they use only its public functions. Unit tests (`#[cfg(test)] mod tests` inside a source file) only for a private helper a public function can't reach.
 - Integration tests: one test binary per crate, `tests/it/main.rs`, with one module per topic.
 - Every parser test input also goes through `httparse` (a dev-dependency of `tally-core`; only the fake API uses it in its own code). Tally must never accept a head that `httparse` rejects.
-- One test per row of the exits tables, in [1. Proxy startup](protocols/1-proxy-startup.md), [4. One program connection](protocols/4-program-connection.md) and [6. Checker](protocols/6-checker.md): the exits of [2. Log writer](protocols/2-log-writer.md) are rows of the first table, and those of [5. Relay response](protocols/5-relay-response.md) rows of the second. And one test per case of [3. Decide request](protocols/3-decide-request.md). The exceptions are the rows only a refusing operating system can cause, which no test can trigger.
+- One test per row of the exits tables, in [1. Proxy startup](protocols/1-proxy-startup.md), [4. One program connection](protocols/4-program-connection.md) and [6. Checker](protocols/6-checker.md): the exits of [2. Log writer](protocols/2-log-writer.md) are rows of the first table, and those of [5. Relay response](protocols/5-relay-response.md) rows of the second. And one test per case of [3. Decide request](protocols/3-decide-request.md). The exceptions are the rows only a refusing operating system can cause, which no test can trigger. Two rows are tested on a stand-in instead of a real connection: a connection that panics, which only a bug can cause, and a send to the Server that breaks part-way, since over loopback the system takes a whole request before a Server can break the connection. A log that stops answering, which only a stuck disk causes, is tested with a log file whose sync never returns.
 - Startup's exits that the operator can cause are tested on the real `proxy` binary, for what it prints and its exit code, those a failing disk causes are tested in-process, with a log file that fails on purpose.
 - Smuggling tests: single-request cases in the parser tables (L2), connection-level cases in `proxy`'s tests (L5). A second round is optional.
 
@@ -310,8 +315,8 @@ On `SIGTERM` or Ctrl-C, the proxy:
 - Prints and records every request it receives, so tests can check what reached it and what didn't. Bytes that aren't a complete request (a head it can't parse, a request cut short, leftover bytes) are recorded too. A head it can't parse gets a `400` with `Connection: close` (RFC 9112 §2.2) then the connection closes in stages.
 - Stops reading a connection once 2 MiB have arrived, before the reply and again after it. *Why:* that is more than the largest request the proxy forwards (an 8 KiB head and a 1 MiB body), so each one is recorded whole, while a sender that never stops can't fill the memory.
 - Answers only the first request on each connection, then closes in stages (RFC 9112 §9.6). Anything sent after it is recorded but never answered, and every record carries the number of the connection it arrived on, so a proxy that sends two requests on one Server connection shows up in the tests (One exception is the response that never ends, it only sends, so nothing is read during it).
-- Has endpoints with awkward responses: chunked, no length (ends when the connection closes), `204`, `/echo-headers` (sends back the request's head), a `103`, then a pause before the final response, a redirect to another host, and a response that never ends (it keeps sending until the proxy closes the connection).
-- Has endpoints that misbehave, at least one for each reason a response can fail with: a `101`, a `1xx` with `Content-Length`, a head cut off by a close (all `bad_response`), silence before the head (`response_timeout`), and a body cut short (`response_incomplete`).
+- Has endpoints with awkward responses: chunked, no length (ends when the connection closes), `204`, `/echo-headers` (sends back the request's head), a `103`, then a pause before the final response, a redirect to another host, a response that never ends (it keeps sending until the proxy closes the connection), and a response followed by a second one past its `Content-Length` (`/extra-after-body`), which must never reach the program.
+- Has endpoints that misbehave, at least one for each reason a response can fail with: a `101`, a `1xx` with `Content-Length`, a head cut off by a close (all `bad_response`), silence before the head (`response_timeout`), a body cut short, silence after the head, in a body with a `Content-Length` and in a chunked one, and a reset in a body with no length (all `response_incomplete`).
 
 ### Docker (at the end of v1)
 
@@ -355,7 +360,8 @@ Each skill has 3 prompts that should trigger it and 2 that shouldn't, checked by
 - With `cargo` and with `docker compose up`:
   - a valid request reaches the fake API with the real key, and its `release` line is in the log. With `cargo`, a test also holds the Writer's answer and checks that nothing reaches the fake API until it's released;
   - a request without a placeholder to a listed host is forwarded and logged as `pass`; to any other host it's refused;
-  - every refusal case can be triggered, is logged, and never reaches the fake API. That includes each `host_mismatch` case (disagreement, no `Host`, two `Host`) and each `malformed_request` rule;
+  - every refusal case can be triggered, is logged, and never reaches the fake API. That includes each `malformed_request` rule, the `Host` ones among them (no `Host`, two `Host`, an invalid one);
+  - a request whose `Host` names another host reaches the fake API with the URL's host as its `Host`;
   - a request with two keys, one allowed for the host and one not, sends nothing;
   - a placeholder outside its key's bound header reaches the fake API unchanged;
   - a redirect that takes the program's placeholder to another host is refused as `host_not_allowed`;

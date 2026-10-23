@@ -33,6 +33,12 @@ if a line can't be written:
 the proxy stops (see 2)
 end note
 
+note over Proxy, Log
+if a connection panics:
+shut down as on a signal (step 7),
+with no stop line
+end note
+
 Op -> Proxy : start, with both paths
 
 rnote over Proxy #d1d5ef
@@ -54,14 +60,19 @@ rnote over Proxy #ffffff
   <latex>\scriptstyle \mathtt{ok} \iff \begin{array}{l} \forall h \in H,\ n(h) \neq \bot \cr \wedge\ |n(H)| = |H| \cr \wedge\ \forall k \in K,\ n(k.\mathtt{host}) \in n(H) \cr \wedge\ \forall k \in K,\ k.\mathtt{placeholder} \in \mathcal{P} \cr \wedge\ |\{k.\mathtt{placeholder} \mid k \in K\}| = |K| \cr \wedge\ \forall k \in K,\ k.\mathtt{header} \notin D \cr \wedge\ \mathrm{dom}(S) = \{k.\mathtt{name} \mid k \in K\} \cr \wedge\ \forall s \in \mathrm{ran}(S),\ s \in \mathcal{A}^{+} \end{array}</latex>
 end rnote
 
-alt if a file can't be read or parsed, or <latex>\neg\,\mathtt{ok}</latex>
+rnote over Proxy #d1d5ef
+  3. bind the listen address,
+  listen for the shutdown signals
+end rnote
+
+alt if a file can't be read or parsed, <latex>\neg\,\mathtt{ok}</latex>, or step 3 fails
 
   Proxy --> Op : why, then exit
 
 else
 
   rnote over Proxy #d1d5ef
-    3. prepare the start line
+    4. prepare the start line
   end rnote
 
   rnote over Proxy #ffffff
@@ -69,18 +80,20 @@ else
   end rnote
 
   rnote over Proxy #d1d5ef
-    4. create this run's log file
+    5. create this run's log file
   end rnote
 
   ref over Proxy, Writer, Log : call 2. start the writer, log the start line, wait until on disk
 
   note right of Writer
-    nothing listens
+    no connection is served
     before this answer
   end note
 
+  Proxy --> Op : listening on the address
+
   rnote over Proxy #d1d5ef
-    5. listen
+    6. serve
   end rnote
 
   group while no shutdown signal, and the log works
@@ -94,13 +107,25 @@ else
   Op -> Proxy : SIGTERM or Ctrl-C
 
   rnote over Proxy #d1d5ef
-    6. shut down: stop accepting, set shutdown,
+    7. shut down: stop accepting, set shutdown,
     then cut_off after a time limit (see 4)
   end rnote
 
-  ref over Proxy, Writer, Log : call 2. log the stop line, after the queued ones, wait until on disk
+  rnote over Proxy #ffffff
+    // <latex>\scriptstyle t_{\mathrm{end}}</latex> when every connection, the stop line and the writer have ended, <latex>\scriptstyle \ell</latex> a time limit
+  end rnote
 
-  Proxy --> Op : exit
+  alt if <latex>t_{\mathrm{end}} \leq t_{\mathtt{cut\_off}} + \ell</latex>
+
+    ref over Proxy, Writer, Log : call 2. log the stop line, after the queued ones, wait until on disk
+
+    Proxy --> Op : exit
+
+  else a stuck disk
+
+    Proxy --> Op : the log didn't answer in time, then exit, no stop line
+
+  end
 
 end
 

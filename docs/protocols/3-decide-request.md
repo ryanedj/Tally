@@ -24,9 +24,10 @@ function decide(request, settings):
     keys_found = [key for key in settings.keys
                   if any(key.placeholder in value for value in request.headers.values_of(key.header))]
 
-    // Case 1: host_mismatch
-    if host_headers != [url_host]:
-        return Refuse(Refusal(host_mismatch, keys_found, url_host))
+    // Case 1: malformed_request (no Host, several, or one the parser's host[:port] rule refuses)
+    // A valid Host naming another host is ignored: the Server gets the URL's (RFC 9112 §3.2.2)
+    if host_headers has not exactly one element, or that element is Error:
+        return Refuse(Refusal(malformed_request, keys_found, url_host))
 
     // Case 2: malformed_request (a bound header appears more than once)
     if any(request.headers.count(key.header) > 1 for key in keys_found):

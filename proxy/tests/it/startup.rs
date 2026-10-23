@@ -2,19 +2,19 @@
 // real binary and check what it prints and its exit code. The rows a failing disk causes
 // call "start_log" and "stop_log" with a "FailingFile".
 
-use crate::common::{CLIENT, FailingFile, Failure, RUN, log_lines, log_path};
-use proxy::{LogFailed, LogFile, StartLogError, create_log_file, start_log, stop_log};
+use crate::common::{
+    CLIENT, FailingFile, Failure, RUN, SECRETS, SETTINGS, SHORT, log_lines, log_path,
+};
+use proxy::{LogFile, StartLogError, Stopped, create_log_file, start_log, stop_log};
+use std::fs::File;
 use std::io;
 use std::path::Path;
 use std::process::{Command, Output};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::sync::{Arc, mpsc};
+use std::time::{Duration, Instant};
 use tally_core::LogLine;
 use tempfile::TempDir;
-
-const SETTINGS: &str = include_str!("../../../tally-core/tests/it/fixtures/one-key.toml");
-const SECRETS: &str = include_str!("../../../tally-core/tests/it/fixtures/one-key-secrets.toml");
 
 /// A folder holding "settings.toml" and "secrets.toml", with these contents.
 fn folder_with(settings: &str, secrets: &str) -> TempDir {
@@ -60,6 +60,34 @@ impl Drop for WatchedFile {
         std::thread::sleep(Duration::from_millis(100));
         self.dropped.store(true, Ordering::SeqCst);
     }
+}
+
+/// A log file on a stuck disk: after "lines_before" lines, a sync returns only once the test
+/// drops the sender of "release".
+struct StuckFile {
+    file: File,
+    lines_before: usize,
+    release: mpsc::Receiver<()>,
+}
+
+impl LogFile for StuckFile {
+    fn append(&mut self, line: &[u8]) -> io::Result<()> {
+        self.file.append(line)
+    }
+
+    fn force_to_disk(&mut self) -> io::Result<()> {
+        if self.lines_before == 0 {
+            let _ = self.release.recv();
+        } else {
+            self.lines_before -= 1;
+        }
+        self.file.force_to_disk()
+    }
+}
+
+/// A deadline far enough not to matter.
+fn later() -> tokio::time::Instant {
+    tokio::time::Instant::now() + Duration::from_secs(5)
 }
 
 #[test]
@@ -125,8 +153,26 @@ fn every_broken_startup_rule_is_printed() {
 }
 
 #[test]
+fn the_listen_address_cant_be_bound() {
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a free port");
+    let address = taken.local_addr().expect("the listener has an address");
+    let settings = SETTINGS.replace("127.0.0.1:8080", &address.to_string());
+    let folder = folder_with(&settings, SECRETS);
+    let output = run_proxy(folder.path(), &["settings.toml", "secrets.toml"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("the listen address can't be bound"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(!folder.path().join("logs").exists(), "no log folder");
+}
+
+#[test]
 fn the_log_file_cant_be_created() {
-    let settings = SETTINGS.replace("log_folder = \"logs\"", "log_folder = \"missing/logs\"");
+    let settings = SETTINGS
+        .replace("127.0.0.1:8080", "127.0.0.1:0")
+        .replace("log_folder = \"logs\"", "log_folder = \"missing/logs\"");
     let folder = folder_with(&settings, SECRETS);
     let output = run_proxy(folder.path(), &["settings.toml", "secrets.toml"]);
     assert_eq!(output.status.code(), Some(1));
@@ -220,7 +266,7 @@ async fn the_stop_line_cant_be_written() {
     .expect("the start line is written");
     let log_failed = log.log_failed.clone();
 
-    assert_eq!(stop_log(log).await, Err(LogFailed));
+    assert_eq!(stop_log(log, later()).await, Err(Stopped::LogFailed));
     assert!(
         dropped.load(Ordering::SeqCst),
         "stop_log returns only once the Writer has printed its error and ended"
@@ -251,7 +297,7 @@ async fn the_stop_line_can_stay_in_the_file_when_only_its_sync_fails() {
     .await
     .expect("the start line is written");
 
-    assert_eq!(stop_log(log).await, Err(LogFailed));
+    assert_eq!(stop_log(log, later()).await, Err(Stopped::LogFailed));
     let lines = log_lines(&log_path(folder.path()));
     assert!(
         matches!(
@@ -262,11 +308,81 @@ async fn the_stop_line_can_stay_in_the_file_when_only_its_sync_fails() {
     );
 }
 
-// Until L5 adds the listen loop, a run logs its start line, then its stop line
+// The row "The log doesn't answer within 4 s of the cut-off", for the stop line. The Writer's
+// thread isn't waited for: a test that hangs here, or after returning, has a join it can't give up
+#[tokio::test]
+async fn a_stop_line_that_doesnt_answer_in_time() {
+    let folder = tempfile::tempdir().expect("a temporary folder");
+    let (release, stuck) = mpsc::channel();
+    let file = StuckFile {
+        file: create_log_file(folder.path(), RUN).expect("the log file is created"),
+        lines_before: 1,
+        release: stuck,
+    };
+    let log = start_log(
+        file,
+        CLIENT.to_string(),
+        RUN.to_string(),
+        "9f2c".to_string(),
+    )
+    .await
+    .expect("the start line is written");
+
+    let started = Instant::now();
+    assert_eq!(
+        stop_log(log, tokio::time::Instant::now() + SHORT).await,
+        Err(Stopped::LogTimedOut)
+    );
+    assert!(
+        started.elapsed() < SHORT + Duration::from_secs(1),
+        "gives up at the deadline: {:?}",
+        started.elapsed()
+    );
+    // Lets the Writer's thread end
+    drop(release);
+}
+
+// The proxy serves until the signal, then logs its stop line. SIGTERM is Unix only; std can't
+// send it (its "Child::kill" sends SIGKILL), so nix does.
+#[cfg(unix)]
 #[test]
-fn a_run_logs_its_start_line_then_its_stop_line() {
-    let folder = folder_with(SETTINGS, SECRETS);
-    let output = run_proxy(folder.path(), &["settings.toml", "secrets.toml"]);
+fn a_shutdown_signal_ends_the_run_with_its_stop_line() {
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+
+    let settings = SETTINGS.replace("127.0.0.1:8080", "127.0.0.1:0");
+    let folder = folder_with(&settings, SECRETS);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_proxy"))
+        .args(["settings.toml", "secrets.toml"])
+        .current_dir(folder.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the proxy binary runs");
+    let mut listening = String::new();
+    BufReader::new(child.stdout.take().expect("stdout is piped"))
+        .read_line(&mut listening)
+        .expect("read the proxy's output");
+    assert!(
+        listening.starts_with("listening on 127.0.0.1:"),
+        "{listening}"
+    );
+
+    let pid = Pid::from_raw(i32::try_from(child.id()).expect("a process id fits in i32"));
+    kill(pid, Signal::SIGTERM).expect("send SIGTERM");
+    for _ in 0..100 {
+        if child.try_wait().expect("check the proxy").is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if child.try_wait().expect("check the proxy").is_none() {
+        child.kill().expect("kill the proxy");
+        panic!("the proxy is still running 10 s after SIGTERM");
+    }
+    let output = child.wait_with_output().expect("the proxy's output");
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(output.stderr.is_empty(), "{}", stderr(&output));
 
@@ -301,7 +417,7 @@ fn a_run_logs_its_start_line_then_its_stop_line() {
             assert_eq!(client, CLIENT);
             assert_eq!(
                 settings_sha256,
-                &tally_core::settings_sha256(SETTINGS.as_bytes())
+                &tally_core::settings_sha256(settings.as_bytes())
             );
         }
         other => panic!("expected a start line then a stop line, got {other:?}"),

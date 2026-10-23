@@ -1,4 +1,4 @@
-use crate::parser::{RequestHead, host_port, normalize_host};
+use crate::parser::{RequestHead, host_port, parse_host_port};
 use crate::reason::RefuseReason;
 use crate::settings::Settings;
 use nonempty::NonEmpty;
@@ -52,11 +52,15 @@ pub fn decide(request: &RequestHead, settings: &Settings) -> Decision {
         })
     };
 
-    // Case 1: host_mismatch
-    let host_headers: Vec<Option<String>> =
-        values_of(request, "host").map(normalize_host).collect();
-    if host_headers != [Some(url_host.clone())] {
-        return refuse(RefuseReason::HostMismatch);
+    // Case 1: malformed_request (no Host, several, or one the host[:port] rule refuses). A valid
+    // Host naming another host is ignored: the Server gets the URL's (RFC 9112 §3.2.2)
+    let mut host_headers = values_of(request, "host");
+    let host_is_valid = match (host_headers.next(), host_headers.next()) {
+        (Some(host), None) => parse_host_port(host).is_ok(),
+        _ => false,
+    };
+    if !host_is_valid {
+        return refuse(RefuseReason::MalformedRequest);
     }
 
     // Case 2: malformed_request (a bound header appears more than once)

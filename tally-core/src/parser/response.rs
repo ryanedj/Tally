@@ -27,7 +27,7 @@ pub struct ResponseHead {
 /// Reads a response head from the bytes read so far.
 pub fn parse_response_head(buf: &[u8]) -> Result<Parsed<ResponseHead>, ParseError> {
     // Pass 1: the status line, then the header lines
-    let parsed = parse_head(buf, |line| {
+    let parsed = parse_head(buf, false, |line| {
         let mut parts = line.splitn(2, |&b| b == b' ');
         match parts.next().unwrap_or_default() {
             b"HTTP/1.1" => {}

@@ -40,6 +40,18 @@ req! { a_delete,
     |head| { assert_eq!(head.method, Method::Delete); }
 }
 
+// Empty lines before the request line are skipped, and belong to its head (RFC 9112 §2.2)
+
+req! { an_empty_line_before_the_request_line,
+    b"\r\nGET http://api.local/ HTTP/1.1\r\nHost: api.local\r\n\r\n",
+    |head| { assert_eq!(head.path_and_query, "/"); }
+}
+
+req! { several_empty_lines_before_the_request_line,
+    b"\r\n\r\n\r\nGET http://api.local/ HTTP/1.1\r\nHost: api.local\r\n\r\n",
+    |head| { assert_eq!(head.path_and_query, "/"); }
+}
+
 req! { a_glued_request_is_left_for_the_next_call,
     b"GET http://api.local/one HTTP/1.1\r\nHost: api.local\r\n\r\n",
     then b"GET http://api.local/two HTTP/1.1\r\nHost: api.local\r\n\r\n",

@@ -49,10 +49,10 @@ group while the connection is open
   end rnote
 
   rnote over Proxy #ffffff
-    // <latex>\scriptstyle h_r</latex> host in the URL, <latex>\scriptstyle r.\mathtt{Host}</latex> the list of Host header values, both normalized (lowercase, :80 if no port),
+    // <latex>\scriptstyle h_r</latex> host in the URL, <latex>\scriptstyle r.\mathtt{Host}</latex> the list of Host header values, both normalized (lowercase, :80 if no port; <latex>\scriptstyle \bot</latex> for a value the Parser refuses),
     // <latex>\scriptstyle r[h]</latex> the values of the header lines named <latex>\scriptstyle h</latex> in <latex>\scriptstyle r</latex>, <latex>\scriptstyle \#_r(h)</latex> their number,
     // <latex>\scriptstyle K_r = \{k \in K \mid k.\mathtt{placeholder} \text{ occurs in } r[k.\mathtt{header}]\}</latex> the keys found, <latex>\scriptstyle \rho</latex> the reason of a refusal
-    <latex>\scriptstyle d = \begin{cases} \mathtt{refuse}(\mathtt{host\_mismatch}) & \quad\text{if } r.\mathtt{Host} \neq [h_r] \cr \mathtt{refuse}(\mathtt{malformed\_request}) & \quad\text{if } \exists k \in K_r,\ \#_r(k.\mathtt{header}) > 1 \cr \mathtt{refuse}(\mathtt{host\_not\_allowed}) & \quad\text{if } \exists k \in K_r,\ k.\mathtt{host} \neq h_r \cr \mathtt{refuse}(\mathtt{host\_not\_allowed}) & \quad\text{if } K_r = \emptyset \wedge h_r \notin H \cr \mathtt{pass} & \quad\text{if } K_r = \emptyset \cr \mathtt{release}(K_r) & \quad\text{otherwise} \end{cases}</latex>
+    <latex>\scriptstyle d = \begin{cases} \mathtt{refuse}(\mathtt{malformed\_request}) & \quad\text{if } |r.\mathtt{Host}| \neq 1 \vee \bot \in r.\mathtt{Host} \cr \mathtt{refuse}(\mathtt{malformed\_request}) & \quad\text{if } \exists k \in K_r,\ \#_r(k.\mathtt{header}) > 1 \cr \mathtt{refuse}(\mathtt{host\_not\_allowed}) & \quad\text{if } \exists k \in K_r,\ k.\mathtt{host} \neq h_r \cr \mathtt{refuse}(\mathtt{host\_not\_allowed}) & \quad\text{if } K_r = \emptyset \wedge h_r \notin H \cr \mathtt{pass} & \quad\text{if } K_r = \emptyset \cr \mathtt{release}(K_r) & \quad\text{otherwise} \end{cases}</latex>
   end rnote
 
   alt if <latex>d = \mathtt{refuse}(\rho)</latex>
@@ -95,7 +95,7 @@ group while the connection is open
 
     Proxy -> Server : request, with the real keys
 
-    alt if the server can't be reached, or the shutdown time limit cuts in
+    alt if the server can't be reached or doesn't read the request, or the shutdown time limit cuts in
 
       ref over Proxy, Writer, Log : call 2. log the upstream_error line, wait until on disk
       Proxy --> Program : 502 or 504 (none when cut off)

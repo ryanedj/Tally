@@ -71,9 +71,10 @@ req! { http_2_0,
 
 // Around the header lines
 
-req! { an_empty_line_before_the_request_line,
-    b"\r\nGET http://api.local/ HTTP/1.1\r\nHost: api.local\r\n\r\n",
-    Err(LeadingEmptyLine)
+// Only "\r\n" empty lines are skipped before a request line
+req! { a_lone_lf_before_the_request_line,
+    b"\nGET http://api.local/ HTTP/1.1\r\nHost: api.local\r\n\r\n",
+    Err(LineEnding)
 }
 
 req! { whitespace_before_the_first_header,

@@ -1,3 +1,4 @@
+use crate::serve::Stopped;
 use jiff::Timestamp;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
@@ -6,6 +7,7 @@ use std::thread::JoinHandle;
 use std::time::SystemTime;
 use tally_core::{Entry, LogLine};
 use tokio::sync::{mpsc, oneshot};
+use tokio::time::{Instant, timeout_at};
 use tokio_util::sync::CancellationToken;
 
 /// Where the Writer puts its lines: the run's file, or a stand-in in tests.
@@ -202,6 +204,8 @@ pub struct RunLog {
     pub writer: LogWriter,
     pub log_failed: CancellationToken,
     thread: JoinHandle<()>,
+    /// Set when the Writer's thread ends, a panic included.
+    ended: CancellationToken,
 }
 
 /// Why the run's log couldn't start (1. Proxy startup, exits).
@@ -213,7 +217,7 @@ pub enum StartLogError {
     StartLine,
 }
 
-/// Step 4 of 1. Proxy startup, once the run's file exists: starts the Writer on its own thread
+/// Step 5 of 1. Proxy startup, once the run's file exists: starts the Writer on its own thread
 /// and logs the start line. If the line fails, waits for the Writer to end first, so its error is
 /// printed before the proxy exits.
 pub async fn start_log(
@@ -225,9 +229,15 @@ pub async fn start_log(
     let (writer, queue) = log_queue(1024);
     let log_failed = CancellationToken::new();
     let token = log_failed.clone();
+    let ended = CancellationToken::new();
+    let thread_ended = ended.clone();
     let thread = std::thread::Builder::new()
         .name("log-writer".to_string())
-        .spawn(move || run_writer(file, queue, client, token))
+        .spawn(move || {
+            // Dropped last, however the Writer ends
+            let _ended = thread_ended.drop_guard();
+            run_writer(file, queue, client, token);
+        })
         .map_err(StartLogError::Thread)?;
     if writer
         .submit(Entry::Start {
@@ -238,23 +248,59 @@ pub async fn start_log(
         .is_err()
     {
         drop(writer);
-        let _ = thread.join();
+        // Joining blocks, so not on a runtime thread
+        let _ = tokio::task::spawn_blocking(move || thread.join()).await;
         return Err(StartLogError::StartLine);
     }
     Ok(RunLog {
         writer,
         log_failed,
         thread,
+        ended,
     })
 }
 
-/// Step 6 of 1. Proxy startup: logs the stop line after every line already queued, then waits
-/// for the Writer to end, whether the line was written or not. The Writer ends at the stop line
-/// even if a clone of "log.writer" is still alive; a line that clone sends later gets "LogFailed".
-pub async fn stop_log(log: RunLog) -> Result<(), LogFailed> {
-    let stopped = log.writer.submit(Entry::Stop).await;
+/// Step 7 of 1. Proxy startup: logs the stop line after every line already queued, then waits
+/// for the Writer to end, whether the line was written or not, until "deadline". The Writer ends
+/// at the stop line even if a clone of "log.writer" is still alive; a line that clone sends later
+/// gets "LogFailed".
+pub async fn stop_log(log: RunLog, deadline: Instant) -> Result<(), Stopped> {
+    let stopped = timeout_at(deadline, log.writer.submit(Entry::Stop)).await;
     drop(log.writer);
-    let joined = log.thread.join();
-    stopped?;
-    joined.map_err(|_| LogFailed)
+    let Ok(stopped) = stopped else {
+        return Err(Stopped::LogTimedOut);
+    };
+    let without_panic = join_writer(log.thread, log.ended, deadline).await?;
+    stopped.map_err(|LogFailed| Stopped::LogFailed)?;
+    if without_panic {
+        Ok(())
+    } else {
+        Err(Stopped::LogFailed)
+    }
+}
+
+/// Step 7 of 1. Proxy startup, when the run ends without a stop line (the log failed, or a
+/// connection panicked): closes the queue and waits for the Writer to end, until "deadline". A
+/// Writer that failed has already printed its error; one that still works ends as normal once
+/// its queue is closed. Every other "LogWriter" must be dropped first.
+pub async fn wait_for_writer(log: RunLog, deadline: Instant) -> Result<(), Stopped> {
+    drop(log.writer);
+    join_writer(log.thread, log.ended, deadline)
+        .await
+        .map(|_| ())
+}
+
+/// Waits until the Writer's thread has ended, at most until "deadline", then joins it: whether
+/// it ended without a panic. The join comes only once "ended" is set, when it's immediate: a join
+/// started in "spawn_blocking" can't be given up, the runtime's shutdown would wait for it.
+async fn join_writer(
+    thread: JoinHandle<()>,
+    ended: CancellationToken,
+    deadline: Instant,
+) -> Result<bool, Stopped> {
+    if timeout_at(deadline, ended.cancelled()).await.is_err() {
+        return Err(Stopped::LogTimedOut);
+    }
+    let joined = tokio::task::spawn_blocking(move || thread.join()).await;
+    Ok(matches!(joined, Ok(Ok(()))))
 }

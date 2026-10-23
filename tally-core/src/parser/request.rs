@@ -32,8 +32,8 @@ pub struct RequestHead {
 
 /// Reads a request head from the bytes read so far.
 pub fn parse_request_head(buf: &[u8]) -> Result<Parsed<RequestHead>, ParseError> {
-    // Pass 1: the request line, then the header lines
-    let parsed = parse_head(buf, |line| {
+    // Pass 1: the request line, after any empty lines (RFC 9112 §2.2), then the header lines
+    let parsed = parse_head(buf, true, |line| {
         let mut parts = line.split(|&b| b == b' ');
         let (Some(method), Some(target), Some(version), None) =
             (parts.next(), parts.next(), parts.next(), parts.next())

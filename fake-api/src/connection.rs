@@ -69,6 +69,25 @@ pub(crate) async fn handle(
     let after = match response {
         Response::Bytes(bytes) => reply(&mut socket, &bytes).await,
         Response::Silent => read_until_close(&mut socket).await,
+        // The pause lets the other side read the bytes first. With SO_LINGER at 0, the close at
+        // the end of this function sends a reset.
+        Response::ResetAfter(bytes) => {
+            if let Err(e) = socket.write_all(&bytes).await {
+                eprintln!("connection error during the reply: {e}");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            if let Err(e) = socket.set_zero_linger() {
+                eprintln!("connection error during the reply: {e}");
+            }
+            Vec::new()
+        }
+        Response::Stalled(bytes) => match socket.write_all(&bytes).await {
+            Ok(()) => read_until_close(&mut socket).await,
+            Err(e) => {
+                eprintln!("connection error during the reply: {e}");
+                Vec::new()
+            }
+        },
         Response::Endless => {
             // A failed write means the other side has closed: the normal end here.
             // Nothing is read meanwhile, so bytes sent during the stream aren't recorded.

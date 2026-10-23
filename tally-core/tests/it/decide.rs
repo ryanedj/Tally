@@ -23,21 +23,13 @@ fn refused(reason: RefuseReason, keys: &[&str], host: &str) -> Decision {
     })
 }
 
-// Case 1: host_mismatch
-
-#[test]
-fn case_1_a_host_header_that_disagrees() {
-    assert_eq!(
-        decision(b"GET http://api.weather.local/ HTTP/1.1\r\nHost: maps.local:8080\r\n\r\n"),
-        refused(RefuseReason::HostMismatch, &[], "api.weather.local:80")
-    );
-}
+// Case 1: malformed_request (no Host, several, or one the host[:port] rule refuses)
 
 #[test]
 fn case_1_no_host_header() {
     assert_eq!(
         decision(b"GET http://api.weather.local/ HTTP/1.1\r\n\r\n"),
-        refused(RefuseReason::HostMismatch, &[], "api.weather.local:80")
+        refused(RefuseReason::MalformedRequest, &[], "api.weather.local:80")
     );
 }
 
@@ -45,7 +37,7 @@ fn case_1_no_host_header() {
 fn case_1_two_host_headers() {
     assert_eq!(
         decision(b"GET http://api.weather.local/ HTTP/1.1\r\nHost: api.weather.local\r\nHost: api.weather.local\r\n\r\n"),
-        refused(RefuseReason::HostMismatch, &[], "api.weather.local:80")
+        refused(RefuseReason::MalformedRequest, &[], "api.weather.local:80")
     );
 }
 
@@ -53,41 +45,69 @@ fn case_1_two_host_headers() {
 fn case_1_a_host_header_the_parser_refuses() {
     assert_eq!(
         decision(b"GET http://api.weather.local/ HTTP/1.1\r\nHost: api_weather.local\r\n\r\n"),
-        refused(RefuseReason::HostMismatch, &[], "api.weather.local:80")
-    );
-}
-
-#[test]
-fn case_1_a_host_header_with_another_port() {
-    assert_eq!(
-        decision(b"GET http://api.weather.local/ HTTP/1.1\r\nHost: api.weather.local:8080\r\n\r\n"),
-        refused(RefuseReason::HostMismatch, &[], "api.weather.local:80")
-    );
-}
-
-// A "Host" without a port means ":80", which isn't the URL's ":8080".
-#[test]
-fn case_1_a_host_header_without_the_urls_port() {
-    assert_eq!(
-        decision(b"GET http://maps.local:8080/ HTTP/1.1\r\nHost: maps.local\r\n\r\n"),
-        refused(RefuseReason::HostMismatch, &[], "maps.local:8080")
+        refused(RefuseReason::MalformedRequest, &[], "api.weather.local:80")
     );
 }
 
 #[test]
 fn case_1_keeps_the_keys_found() {
     assert_eq!(
-        decision(b"GET http://api.weather.local/ HTTP/1.1\r\nHost: maps.local:8080\r\nAuthorization: Bearer TALLY_0123456789abcdef0123456789abcdef\r\n\r\n"),
+        decision(b"GET http://api.weather.local/ HTTP/1.1\r\nAuthorization: Bearer TALLY_0123456789abcdef0123456789abcdef\r\n\r\n"),
         refused(
-            RefuseReason::HostMismatch,
+            RefuseReason::MalformedRequest,
             &["weather_key"],
             "api.weather.local:80"
         )
     );
 }
 
+// A valid Host naming another host is ignored: the URL decides (RFC 9112 §3.2.2)
+
 #[test]
-fn a_host_header_spelled_differently_agrees() {
+fn a_host_header_naming_another_host_is_ignored() {
+    assert_eq!(
+        decision(b"GET http://api.weather.local/ HTTP/1.1\r\nHost: maps.local:8080\r\n\r\n"),
+        Decision::Pass {
+            host: "api.weather.local:80".to_string()
+        }
+    );
+}
+
+#[test]
+fn a_host_header_with_another_port_is_ignored() {
+    assert_eq!(
+        decision(b"GET http://api.weather.local/ HTTP/1.1\r\nHost: api.weather.local:8080\r\n\r\n"),
+        Decision::Pass {
+            host: "api.weather.local:80".to_string()
+        }
+    );
+}
+
+// A "Host" without a port means ":80", not the URL's ":8080"; the URL's port counts.
+#[test]
+fn a_host_header_without_the_urls_port_is_ignored() {
+    assert_eq!(
+        decision(b"GET http://maps.local:8080/ HTTP/1.1\r\nHost: maps.local\r\n\r\n"),
+        Decision::Pass {
+            host: "maps.local:8080".to_string()
+        }
+    );
+}
+
+// The Host can't steer a key: it goes toward the URL's host, or nowhere
+#[test]
+fn a_key_follows_the_url_not_the_host_header() {
+    assert_eq!(
+        decision(b"GET http://api.weather.local/ HTTP/1.1\r\nHost: maps.local:8080\r\nAuthorization: Bearer TALLY_0123456789abcdef0123456789abcdef\r\n\r\n"),
+        Decision::Release {
+            keys: NonEmpty::new("weather_key".to_string()),
+            host: "api.weather.local:80".to_string()
+        }
+    );
+}
+
+#[test]
+fn a_host_header_in_another_spelling_is_valid() {
     assert_eq!(
         decision(b"GET http://api.weather.local/ HTTP/1.1\r\nHost: API.Weather.Local:80\r\n\r\n"),
         Decision::Pass {
@@ -210,9 +230,9 @@ fn a_bound_header_in_any_case() {
 #[test]
 fn case_1_comes_before_case_3() {
     assert_eq!(
-        decision(b"GET http://maps.local:8080/ HTTP/1.1\r\nHost: api.weather.local\r\nAuthorization: Bearer TALLY_0123456789abcdef0123456789abcdef\r\n\r\n"),
+        decision(b"GET http://maps.local:8080/ HTTP/1.1\r\nAuthorization: Bearer TALLY_0123456789abcdef0123456789abcdef\r\n\r\n"),
         refused(
-            RefuseReason::HostMismatch,
+            RefuseReason::MalformedRequest,
             &["weather_key"],
             "maps.local:8080"
         )
@@ -227,18 +247,6 @@ fn case_2_comes_before_case_3() {
             RefuseReason::MalformedRequest,
             &["weather_key"],
             "maps.local:8080"
-        )
-    );
-}
-
-#[test]
-fn case_1_comes_before_case_2() {
-    assert_eq!(
-        decision(b"GET http://api.weather.local/ HTTP/1.1\r\nHost: maps.local:8080\r\nAuthorization: Bearer TALLY_0123456789abcdef0123456789abcdef\r\nAuthorization: Basic x\r\n\r\n"),
-        refused(
-            RefuseReason::HostMismatch,
-            &["weather_key"],
-            "api.weather.local:80"
         )
     );
 }

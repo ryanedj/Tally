@@ -20,8 +20,8 @@ unwrap_used = "warn"
 indexing_slicing = "warn"
 
 [workspace.dependencies]
-tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "time", "sync"] }
-tokio-util = "0.7"
+tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "time", "sync", "signal"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 httparse = "1"
 thiserror= "2"
 serde = { version = "1", features = ["derive"] }
@@ -32,4 +32,6 @@ sha2 = "0.11"
 jiff = { version = "0.2", default-features = false, features = ["std"] }
 getrandom = "0.4"
 tempfile = "3"
+nix = { version = "0.31", features = ["signal"] }
 tally-core = { path = "tally-core" }
+fake-api = { path = "fake-api" }

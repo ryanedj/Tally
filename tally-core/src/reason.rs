@@ -9,7 +9,6 @@ pub enum RefuseReason {
     HeadTooLarge,
     BodyTooLarge,
     MalformedRequest,
-    HostMismatch,
     UnsupportedRequest,
     HostNotAllowed,
 }

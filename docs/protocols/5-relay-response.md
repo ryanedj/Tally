@@ -9,7 +9,7 @@
 
 **Output:** `KeepOpen  |  Close`: whether the program's connection stays open after this request. [4. One program connection](4-program-connection.md) acts on it, and closes the Server connection either way.
 - `KeepOpen`: the program got a complete reply of known length, without `Connection: close`.
-- `Close`: the reply said `Connection: close`, or the response was cut short.
+- `Close`: the reply said `Connection: close`, or the response was cut short. [4. One program connection](4-program-connection.md) then closes the connection gently.
 
 **Calls:** [2. Log writer](2-log-writer.md), for every line, through `upstream_failed`.
 
@@ -80,7 +80,7 @@ function relay_body(server, program, body_end, silence_limit):
             return Done
         UntilServerCloses:
             copy from server to program until the server closes
-            if the server sends nothing for silence_limit:
+            if the server sends nothing for silence_limit, or breaks the connection:   // RFC 9112 §8
                 return Incomplete
             return Done
 ```

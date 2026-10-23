@@ -6,6 +6,10 @@ pub(crate) enum Response {
     Bytes(Vec<u8>),
     /// Nothing: wait until the other side closes.
     Silent,
+    /// These bytes, then nothing: wait until the other side closes.
+    Stalled(Vec<u8>),
+    /// These bytes, a 200 ms pause, then a reset instead of a close.
+    ResetAfter(Vec<u8>),
     /// A 200 with no length, then a body that never ends, keep sending until the other side
     /// closes, so whatever buffers lie between the fake API and the program fills up.
     Endless,
@@ -36,8 +40,9 @@ pub(crate) fn route(received: &Received) -> Response {
         // For tests:protocol 4's "Program stops reading for 30 s".
         "/endless" => return Response::Endless,
         "/no-content" => b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n",
-        // An interim 103, then the final response after a pause: a server sends a 103
-        // "while waiting for the final response" (RFC 8297), and Tally must relay it as it arrives.
+        // An interim 103, then the final response after a pause: "A server can send the
+        // informational response … and then run time-consuming operations to generate the final
+        // response" (RFC 8297), and Tally must relay it as it arrives.
         // For tests: the 500 ms pause stands in for the server's work, so a test can see the
         // 103 arrive alone.
         "/early-hints" => {
@@ -60,6 +65,11 @@ pub(crate) fn route(received: &Received) -> Response {
         "/redirect" => {
             b"HTTP/1.1 302 Found\r\nConnection: close\r\nLocation: http://elsewhere.local/\r\nContent-Length: 0\r\n\r\n"
         }
+        // For tests: a whole second response right after the first one's 2 bytes. A proxy must
+        // stop after exactly Content-Length bytes (RFC 9112 §6.3), so the program never sees it.
+        "/extra-after-body" => {
+            b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\nokHTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 8\r\n\r\nsmuggled"
+        }
         // For tests, misbehaving on purpose: each breaks HTTP in one way the proxy must catch
         // A 101 to a request that asked for no upgrade, which RFC 9110 §7.8 forbids (bad_response)
         "/switch" => {
@@ -75,6 +85,24 @@ pub(crate) fn route(received: &Received) -> Response {
         "/silent" => return Response::Silent,
         // a body shorter than announced (response_incomplete)
         "/cut-body" => b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 10\r\n\r\nabcd",
+        // part of the body, then silence, in a body with a length and in one that ends with the
+        // close (response_incomplete)
+        "/stall-body" => {
+            return Response::Stalled(
+                b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 10\r\n\r\nabcd".to_vec(),
+            );
+        }
+        // a body that ends with the close, broken off by a reset (response_incomplete)
+        "/reset-body" => {
+            return Response::ResetAfter(
+                b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nthe body is cut by a reset".to_vec(),
+            );
+        }
+        "/stall-chunked" => {
+            return Response::Stalled(
+                b"HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n".to_vec(),
+            );
+        }
         _ => b"HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
     };
     Response::Bytes(bytes.to_vec())

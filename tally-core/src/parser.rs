@@ -25,17 +25,27 @@ pub enum Parsed<H> {
 type Header = (String, Vec<u8>);
 
 /// Pass 1, shared by requests and responses: checks each complete line as soon as it has
-/// arrived, the start line with "start_line", then the header lines, up to the empty line.
+/// arrived, the start line with "start_line", then the header lines, up to the empty line. Empty
+/// lines before the start line are skipped if "skips_empty_lines", refused otherwise; skipped,
+/// they belong to the head: they count toward 8 KiB and its length.
 fn parse_head<S>(
     buf: &[u8],
+    skips_empty_lines: bool,
     start_line: impl Fn(&[u8]) -> Result<S, ParseError>,
 ) -> Result<Parsed<(S, Vec<Header>)>, ParseError> {
-    let Some((line, mut pos)) = next_line(buf, 0)? else {
-        return Ok(Parsed::Partial);
+    let mut pos = 0;
+    let line = loop {
+        let Some((line, next)) = next_line(buf, pos)? else {
+            return Ok(Parsed::Partial);
+        };
+        pos = next;
+        if !line.is_empty() {
+            break line;
+        }
+        if !skips_empty_lines {
+            return Err(ParseError::LeadingEmptyLine);
+        }
     };
-    if line.is_empty() {
-        return Err(ParseError::LeadingEmptyLine);
-    }
     let start = start_line(line)?;
 
     let mut headers: Vec<Header> = Vec::new();

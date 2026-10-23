@@ -12,6 +12,12 @@ req! { a_head_still_unfinished_at_8_kib,
     Err(TooLarge)
 }
 
+// Empty lines before the request line count toward the 8 KiB
+req! { eight_kib_of_empty_lines,
+    &b"\r\n".repeat(4096),
+    Err(TooLarge)
+}
+
 req! { a_head_with_101_headers,
     &head_with_headers(b"GET http://api.local/ HTTP/1.1", 101),
     Err(TooManyHeaders)

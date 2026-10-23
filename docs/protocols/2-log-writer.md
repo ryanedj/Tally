@@ -11,7 +11,7 @@
 **Calls:** none.
 
 **Called by:**
-- [1. Proxy startup](1-proxy-startup.md), at step 4, which starts the Writer and sends the start line, and at step 6, which sends the stop line
+- [1. Proxy startup](1-proxy-startup.md), at step 5, which starts the Writer and sends the start line, and at step 7, which sends the stop line
 - [4. One program connection](4-program-connection.md) and [5. Relay response](5-relay-response.md), for every line, through `log_or_stop`
 
 ## Pseudo code
