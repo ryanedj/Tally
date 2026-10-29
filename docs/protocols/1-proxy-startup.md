@@ -26,6 +26,8 @@ function main(command_line):
     if any of them is Error:
         print(the error)                   // the file, the line and what was wrong
         exit(failure)
+    if settings.log_folder is relative:
+        settings.log_folder = folder_of(command_line.settings_path) + "/" + settings.log_folder
 
     // 2. Check them
     for host in settings.hosts and key.host in settings.keys:

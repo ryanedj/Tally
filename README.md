@@ -6,7 +6,7 @@ Tally is a proxy for sandboxed programs that need to call outside APIs. The prog
 
 This project was created as a learning exercise and is not intended for production use.
 
-Status: the v1 design is done (last changed 2026-10-18), and the build has started: the fake API (L1) is written and tested.
+Status: the v1 design is done (last changed 2026-10-27), and the build is in progress: everything up to the fake program and its demo (L1 to L6) is written and tested.
 
 ## How it works
 
@@ -108,10 +108,15 @@ The design, with the reason for each choice, is in [docs/DESIGN.md](docs/DESIGN.
 | `tally-core/` | shared library: parser, checks, log format, settings |
 | `proxy/` | the proxy |
 | `fake-api/`, `fake-program/` | a test API and a test program, for the demo |
+| `demo/` | the demo's settings, fake keys and the program's environment |
 | `checker/` | re-checks a log against the settings |
 | `docs/` | design and protocols |
 | `.claude/` | Claude Code settings and Tally's skills |
 | `.github/` | CI workflow |
+
+## Run the demo
+
+On Linux or WSL, `bash .claude/skills/tally-demo/scripts/demo.sh` starts the fake API and the proxy, runs the fake program's requests through the proxy, stops the proxy, and prints what each one did and the run's log. In Claude Code, `/tally-demo` runs it and explains the log request by request.
 
 ## Commits and CI
 
@@ -126,9 +131,9 @@ Each push and pull request to `main` runs `cargo fmt --check`, `cargo clippy --a
 - [x] L1: fake API
 - [x] L2: request and response parsers, with tables of tricky inputs
 - [x] L3: loading settings and secrets, and deciding each request
-- [ ] L4: log writer; the log format is fixed from here on
-- [ ] L5: proxy loop, with connection-level smuggling tests
-- [ ] L6: fake program and end-to-end demo
+- [x] L4: log writer; the log format is fixed from here on
+- [x] L5: proxy loop, with connection-level smuggling tests
+- [x] L6: fake program and end-to-end demo
 - [ ] L7: checker
 - [ ] L8: Docker and Compose
 

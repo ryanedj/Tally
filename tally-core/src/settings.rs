@@ -7,7 +7,8 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
-/// The settings file as written, before "check_settings".
+/// The settings file once parsed, a relative log folder joined to the file's folder, before
+/// "check_settings".
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawSettings {
@@ -117,13 +118,20 @@ pub fn settings_sha256(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// Reads the settings from the file's bytes, "path" names the file in an error.
+/// Reads the settings from the file's bytes, "path" names the file in an error. A relative log
+/// folder belongs to the settings file's folder.
 pub fn parse_settings(bytes: &[u8], path: &Path) -> Result<RawSettings, LoadError> {
-    toml::from_slice(bytes).map_err(|error: toml::de::Error| LoadError::InvalidSettings {
-        path: path.to_path_buf(),
-        line: line_of(&error, bytes),
-        message: error.message().to_string(),
-    })
+    let mut raw: RawSettings =
+        toml::from_slice(bytes).map_err(|error: toml::de::Error| LoadError::InvalidSettings {
+            path: path.to_path_buf(),
+            line: line_of(&error, bytes),
+            message: error.message().to_string(),
+        })?;
+    // An absolute log folder replaces the folder it's joined to
+    if let Some(folder) = path.parent() {
+        raw.log_folder = folder.join(&raw.log_folder);
+    }
+    Ok(raw)
 }
 
 /// Reads the secrets from the file's bytes. An error gives only the line, since the TOML error

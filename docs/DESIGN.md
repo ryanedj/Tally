@@ -1,7 +1,7 @@
 # Tally
 A secure proxy that controls, logs, and audits API-key access from sandboxed programs.
 
-Status: v1 design done, last changed 2026-10-23. Build in progress.
+Status: v1 design done, last changed 2026-10-27. Build in progress.
 
 ## What Tally does
 
@@ -55,7 +55,7 @@ I first meant to work everything out on my own, thinking it would teach me more.
 | Pingora | Cloudflare's Rust proxy framework | Its security fixes, as a list of mistakes to avoid; refusing a `Connection` header that names a header the proxy relies on |
 | Smokescreen (Stripe) | An egress proxy that decides which hosts a program may reach | Per-decision logging; checking addresses, not names |
 | Fly.io's tokenizer | A proxy that adds secrets to requests from untrusted programs | The closest match to Tally: host allowlists per secret, no reuse of server connections, and the allowlist as its answer to a service that echoes secrets; a secret kept out of query strings, which end up in access logs more often than headers |
-| iron-proxy | An egress proxy that swaps proxy tokens from a sandbox for real secrets | Swapping a token only where it's configured to go: headers by default, the URL only on request |
+| iron-proxy | An egress proxy that swaps proxy tokens from a sandbox for real secrets | Swapping a token only where it's configured to go: headers by default, the URL only on request; a demo client that sends labelled requests through the proxy and leaves the judging to the log, with the demo's files in one folder |
 | RFC 6750 (OAuth 2.0 bearer tokens) | How a client sends a bearer token | Keep keys out of URLs, since URLs end up in logs (§2.3, §5.3) |
 | RFC 3986 (URIs) | The syntax of URLs | The `Host` the proxy writes leaves out the default port (§3.2.3) |
 | `httparse` | Rust's strict HTTP/1 head parser | A cross-check for Tally's own parser in tests; the parser's shape (the bytes read so far, read again from the start, give a partial head, a complete one, or an error); one named test per table row; empty lines before a request line skipped and counted in the head's length |
@@ -241,7 +241,7 @@ A connection that panics ends the run like a crash: the proxy shuts down as on a
 
 - Settings file, which can be committed:
   - `client`: the program this proxy serves
-  - listen address and log folder
+  - listen address and log folder. A relative log folder is relative to the settings file's folder, so the same file logs to the same place wherever the proxy starts, as Compose reads a relative path in its file.
   - hosts, each as `host:port`, with the Server's address to connect to (e.g. `127.0.0.1:9001`). A host may be written in any spelling the parser accepts for a URL host, it's normalized to lowercase `host:port`, port written out.
   - keys, each with a name, a placeholder, an allowed host, and a bound header
 - Secrets file: real key values only, by key name.
@@ -299,13 +299,13 @@ A connection that panics ends the run like a crash: the proxy shuts down as on a
 
 ### Cargo workspace
 
-- Shared library + separate binaries: one `tally-core` library crate for shared code (parser, checks, log format, settings loading), and four binary crates (`fake-api`, `proxy`, `fake-program`, `checker`). All but the fake API depend on it: the fake API reads requests with `httparse`, so a bug in Tally's parser can't hide in the tests meant to catch it.
+- Shared library + separate binaries: one `tally-core` library crate for shared code (parser, checks, log format, settings loading), and four binary crates (`fake-api`, `proxy`, `fake-program`, `checker`). The proxy and the checker depend on it. The fake API and the fake program read HTTP with `httparse` instead, so a bug in Tally's parser can't hide in the tests and the runs meant to catch it.
 
 ### Tests
 
 - `tally-core`'s parser tables, settings checks and decisions are integration tests in `tally-core/tests/it/`, one module per topic, since they use only its public functions. Unit tests (`#[cfg(test)] mod tests` inside a source file) only for a private helper a public function can't reach.
 - Integration tests: one test binary per crate, `tests/it/main.rs`, with one module per topic.
-- Every parser test input also goes through `httparse` (a dev-dependency of `tally-core`; only the fake API uses it in its own code). Tally must never accept a head that `httparse` rejects.
+- Every parser test input also goes through `httparse` (a dev-dependency of `tally-core`; the fake API and the fake program use it in their own code). Tally must never accept a head that `httparse` rejects.
 - One test per row of the exits tables, in [1. Proxy startup](protocols/1-proxy-startup.md), [4. One program connection](protocols/4-program-connection.md) and [6. Checker](protocols/6-checker.md): the exits of [2. Log writer](protocols/2-log-writer.md) are rows of the first table, and those of [5. Relay response](protocols/5-relay-response.md) rows of the second. And one test per case of [3. Decide request](protocols/3-decide-request.md). The exceptions are the rows only a refusing operating system can cause, which no test can trigger. Two rows are tested on a stand-in instead of a real connection: a connection that panics, which only a bug can cause, and a send to the Server that breaks part-way, since over loopback the system takes a whole request before a Server can break the connection. A log that stops answering, which only a stuck disk causes, is tested with a log file whose sync never returns.
 - Startup's exits that the operator can cause are tested on the real `proxy` binary, for what it prints and its exit code, those a failing disk causes are tested in-process, with a log file that fails on purpose.
 - Smuggling tests: single-request cases in the parser tables (L2), connection-level cases in `proxy`'s tests (L5). A second round is optional.
@@ -317,6 +317,14 @@ A connection that panics ends the run like a crash: the proxy shuts down as on a
 - Answers only the first request on each connection, then closes in stages (RFC 9112 §9.6). Anything sent after it is recorded but never answered, and every record carries the number of the connection it arrived on, so a proxy that sends two requests on one Server connection shows up in the tests (One exception is the response that never ends, it only sends, so nothing is read during it).
 - Has endpoints with awkward responses: chunked, no length (ends when the connection closes), `204`, `/echo-headers` (sends back the request's head), a `103`, then a pause before the final response, a redirect to another host, a response that never ends (it keeps sending until the proxy closes the connection), and a response followed by a second one past its `Content-Length` (`/extra-after-body`), which must never reach the program.
 - Has endpoints that misbehave, at least one for each reason a response can fail with: a `101`, a `1xx` with `Content-Length`, a head cut off by a close (all `bad_response`), silence before the head (`response_timeout`), a body cut short, silence after the head, in a body with a `Content-Length` and in a chunked one, and a reset in a body with no length (all `response_incomplete`).
+
+### Fake program
+
+- A demo client, like iron-proxy's. It plays the sandboxed weather app and sends labelled requests through the proxy, each on its own connection: the honest call with its placeholder, a call with no key, what a compromised program would try (its placeholder toward another host, a redirect followed with the key, `Connection` naming the key's header), and one request per refusal reason. It prints what it sent and what came back.
+- It expects nothing, and fails only when its settings are missing or invalid, or the proxy can't be reached. The log is the record: the `tally-demo` skill reads it, and the checker judges it. 
+- It reads its settings from its environment, as an app would: the proxy in `http_proxy`, and each placeholder where it would read its API key (`WEATHER_KEY`, `MAPS_KEY`). The proxy is an IP address, never a name, as in the proxy's settings.
+- It writes each request as bytes, prints each reply as it came, and reads a redirect's `Location` with `httparse`. *Why:* a stock HTTP client can't send the malformed requests, and drops `Authorization` on a redirect to another host (reqwest does), so it would never show a compromised program following one.
+- The demo runs it with the fake API and the proxy, from their binaries and the files in `demo/`, then stops the proxy with `SIGTERM`, so the log ends with its `stop` line. Linux only: Windows can't stop the proxy cleanly from a script.
 
 ### Docker (at the end of v1)
 
@@ -360,7 +368,7 @@ Each skill has 3 prompts that should trigger it and 2 that shouldn't, checked by
 - With `cargo` and with `docker compose up`:
   - a valid request reaches the fake API with the real key, and its `release` line is in the log. With `cargo`, a test also holds the Writer's answer and checks that nothing reaches the fake API until it's released;
   - a request without a placeholder to a listed host is forwarded and logged as `pass`; to any other host it's refused;
-  - every refusal case can be triggered, is logged, and never reaches the fake API. That includes each `malformed_request` rule, the `Host` ones among them (no `Host`, two `Host`, an invalid one);
+  - every refusal case can be triggered, is logged, and never reaches the fake API. That includes each `malformed_request` rule, the `Host` ones among them (no `Host`, two `Host`, an invalid one). With `docker compose up`, one request per reason is enough: each rule is proven by the cargo tests, since Docker changes the networks, the files and the addresses, not the parser;
   - a request whose `Host` names another host reaches the fake API with the URL's host as its `Host`;
   - a request with two keys, one allowed for the host and one not, sends nothing;
   - a placeholder outside its key's bound header reaches the fake API unchanged;

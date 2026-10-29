@@ -9,7 +9,7 @@ use crate::common::{
 use proxy::{Limits, Stopped, log_queue, serve};
 use std::time::{Duration, Instant};
 use tally_core::Entry;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpSocket};
 use tokio::sync::oneshot;
 use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
@@ -213,12 +213,13 @@ async fn a_log_that_fails_after_the_program_closed_sends_nothing() {
 
 #[tokio::test]
 async fn the_connection_to_the_server_fails() {
-    // A port nobody listens on
-    let closed = TcpListener::bind("127.0.0.1:0")
-        .await
+    // A port bound but never listened on refuses connections (RFC 9293 §3.10.7.1), and no other
+    // test can take it while "closed" holds it
+    let closed = TcpSocket::new_v4().expect("a socket");
+    closed
+        .bind("127.0.0.1:0".parse().expect("an address"))
         .expect("bind a free port");
-    let server = closed.local_addr().expect("the listener has an address");
-    drop(closed);
+    let server = closed.local_addr().expect("the socket has an address");
     // Windows tries a refused connection again for about 2 s
     let limits = Limits {
         connect: Duration::from_secs(10),

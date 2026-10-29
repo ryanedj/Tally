@@ -1,5 +1,5 @@
 use crate::common::checked;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tally_core::{
     LoadError, StartupProblem, check_settings, parse_secrets, parse_settings, read_config_file,
     settings_sha256,
@@ -53,6 +53,32 @@ fn hosts_are_normalized_and_headers_lowercased() {
     let key = settings.keys().get("weather_key").expect("the key");
     assert_eq!(key.host(), "api.weather.local:80");
     assert_eq!(key.header(), "x-api-key");
+}
+
+/// The log folder of "settings" once loaded from a file at "path".
+fn log_folder(settings: &str, path: &str) -> PathBuf {
+    let raw = parse_settings(settings.as_bytes(), Path::new(path)).expect("the settings parse");
+    let secrets =
+        parse_secrets(SECRETS.as_bytes(), Path::new("secrets.toml")).expect("the secrets parse");
+    let settings = check_settings(raw, &secrets).expect("the settings pass the startup rules");
+    settings.log_folder().to_path_buf()
+}
+
+#[test]
+fn a_relative_log_folder_belongs_to_the_settings_files_folder() {
+    assert_eq!(
+        log_folder(SETTINGS, "demo/settings.toml"),
+        Path::new("demo/logs")
+    );
+}
+
+#[test]
+fn an_absolute_log_folder_stays_as_written() {
+    let settings = SETTINGS.replace("log_folder = \"logs\"", "log_folder = \"/var/log/tally\"");
+    assert_eq!(
+        log_folder(&settings, "demo/settings.toml"),
+        Path::new("/var/log/tally")
+    );
 }
 
 #[test]

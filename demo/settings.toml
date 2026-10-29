@@ -1,0 +1,18 @@
+# The demo's settings: two hosts, both served by the one fake API, and a key for each.
+client = "weather-app"
+listen_address = "127.0.0.1:8080"
+log_folder = "logs"
+
+[hosts]
+"api.weather.local:80" = "127.0.0.1:9001"
+"maps.local:8080" = "127.0.0.1:9001"
+
+[keys.weather_key]
+placeholder = "TALLY_7d3f9a2c4e1b8a6f0c5d2e9b3a7f1c48"
+host = "api.weather.local:80"
+header = "Authorization"
+
+[keys.maps_key]
+placeholder = "TALLY_b2e8c41f9d7a3e06f5c1b8d4a2e9f730"
+host = "maps.local:8080"
+header = "X-Api-Key"

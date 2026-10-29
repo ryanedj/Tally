@@ -7,4 +7,5 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
+httparse.workspace = true
 tokio.workspace = true

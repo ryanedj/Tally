@@ -143,6 +143,7 @@ dependencies = [
 name = "fake-program"
 version = "0.1.0"
 dependencies = [
+ "httparse",
  "tokio",
 ]
 

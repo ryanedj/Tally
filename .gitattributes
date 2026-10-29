@@ -1,2 +1,6 @@
 # The tests change the fixtures by matching "\n", this keeps them LF on every checkout
 tally-core/tests/it/fixtures/*.toml text eol=lf
+
+# Read by bash, which would keep a "\r" at the end of each line and value
+demo/** text eol=lf
+*.sh text eol=lf
