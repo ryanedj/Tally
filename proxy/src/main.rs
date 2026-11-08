@@ -3,7 +3,7 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::Duration;
 use tally_core::{
-    check_settings, parse_secrets, parse_settings, read_config_file, settings_sha256,
+    check_secrets, check_settings, parse_secrets, parse_settings, read_config_file, settings_sha256,
 };
 use tokio::net::TcpListener;
 
@@ -21,10 +21,10 @@ async fn main() -> ExitCode {
     // 1. Load the settings and the secrets
     let loaded = read_config_file(settings_path).and_then(|settings_bytes| {
         let raw = parse_settings(&settings_bytes, settings_path)?;
-        let secrets = parse_secrets(&read_config_file(secrets_path)?, secrets_path)?;
-        Ok((settings_bytes, raw, secrets))
+        let raw_secrets = parse_secrets(&read_config_file(secrets_path)?, secrets_path)?;
+        Ok((settings_bytes, raw, raw_secrets))
     });
-    let (settings_bytes, raw, secrets) = match loaded {
+    let (settings_bytes, raw, raw_secrets) = match loaded {
         Ok(loaded) => loaded,
         Err(error) => {
             eprintln!("{error}");
@@ -33,10 +33,11 @@ async fn main() -> ExitCode {
     };
 
     // 2. Check them
-    let settings = match check_settings(raw, &secrets) {
-        Ok(settings) => settings,
-        Err(problems) => {
-            for problem in problems {
+    let secrets = check_secrets(raw_secrets, &raw);
+    let (settings, secrets) = match (check_settings(raw), secrets) {
+        (Ok(settings), Ok(secrets)) => (settings, secrets),
+        (settings, secrets) => {
+            for problem in settings.err().into_iter().chain(secrets.err()).flatten() {
                 eprintln!("{problem}");
             }
             return ExitCode::FAILURE;

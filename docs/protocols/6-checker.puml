@@ -52,11 +52,11 @@ rnote over Checker #d1d5ef
   flag every malformed line
 end rnote
 
-alt if <latex>R = \emptyset \ \vee\ R_0.\mathtt{event} \neq \mathtt{start} \ \vee\ R_0.\mathtt{settings\_sha256} \neq h</latex>
+alt if <latex>R = \emptyset \ \vee\ R_0.\mathtt{event} \neq \mathtt{start} \ \vee\ R_0.\mathtt{settings\_sha256} \neq h \ \vee\ \neg\,\mathtt{valid}(\text{settings file})</latex>
 
   rnote over Checker #d1d5ef
     3. not judged: no start line (flagged),
-    or different settings
+    different settings, or settings that aren't valid
   end rnote
 
 else
@@ -72,8 +72,9 @@ else
   end rnote
 
   rnote over Checker #d1d5ef
-    flag every <latex>x</latex> with <latex>\neg\,\mathtt{ok}(x)</latex>, and the run if <latex>\neg\,\mathtt{stopped}</latex>;
-    count the events by type and reason
+    flag every <latex>x</latex> with <latex>\neg\,\mathtt{ok}(x)</latex>, the run if <latex>\neg\,\mathtt{stopped}</latex>,
+    and a torn last line if <latex>\mathtt{stopped}</latex>;
+    list every <latex>x</latex>, count the events by type and reason
   end rnote
 
 end
@@ -82,7 +83,7 @@ rnote over Checker #d1d5ef
   5. report
 end rnote
 
-Checker --> Aud : counts and flags, whether the run was judged, torn last line
+Checker --> Aud : rows, counts and flags, whether the run was judged, torn last line
 
 rnote over Checker #ffffff
   <latex>\scriptstyle \mathtt{exit} = \begin{cases} 1 & \quad\text{if anything is flagged} \cr 2 & \quad\text{else, if the run wasn't judged} \cr 0 & \quad\text{otherwise} \end{cases}</latex>

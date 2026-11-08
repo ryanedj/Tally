@@ -1,10 +1,22 @@
 #!/usr/bin/env bash
 # The end-to-end demo for tally-demo: the fake API, the proxy and the fake program run from their
-# binaries, then the proxy is stopped by SIGTERM, as Docker stops it. Linux only, since Windows
-# can't stop the proxy cleanly from a script: from Git Bash it runs itself again under WSL.
-# Always exits 0, so a failed step is reported instead of aborting the skill.
+# binaries, then the proxy is stopped by SIGTERM, as Docker stops it, and the checker judges the
+# log. Linux only, since on Windows Git Bash's kill only terminates the proxy: from Git Bash it
+# runs itself again under WSL, and exits 0.
+# Exits 0, so a failed step is reported instead of aborting the skill. With TALLY_DEMO_STRICT set,
+# as in CI, it exits with the checker's code, or 1 if the program or the proxy failed or a step
+# never ran.
 
-cd "$(dirname "$0")/../../../.." || { echo "demo.sh: can't find the repo root"; exit 0; }
+# A program that failed leaves a log the checker calls clean
+finish() {
+  [ -n "$TALLY_DEMO_STRICT" ] || exit 0
+  if [ "$program_exit" != 0 ] || [ "$proxy_exit" != 0 ]; then
+    exit 1
+  fi
+  exit "${checker_exit:-1}"
+}
+
+cd "$(dirname "$0")/../../../.." || { echo "demo.sh: can't find the repo root"; finish; }
 
 case "$(uname -s)" in
   MINGW* | MSYS*)
@@ -55,8 +67,13 @@ report() {
   if [ -n "$log" ]; then
     echo "== This run's log: $log"
     cat "$log"
+    echo
+    checker_output="$("$target/checker" "$log" demo/settings.toml 2>&1)"
+    checker_exit=$?
+    echo "== The checker (exit code $checker_exit)"
+    echo "$checker_output"
   fi
-  exit 0
+  finish
 }
 
 # Waits up to 10 s for the "listening on" line in file $1, while process $2 runs
@@ -70,9 +87,9 @@ wait_for_listening() {
 }
 
 echo "== Building"
-if ! cargo build --quiet --locked -p fake-api -p proxy -p fake-program 2>&1; then
+if ! cargo build --quiet --locked -p fake-api -p proxy -p fake-program -p checker 2>&1; then
   echo "demo.sh: the build failed"
-  exit 0
+  finish
 fi
 echo "(done)"
 echo

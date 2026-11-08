@@ -68,6 +68,16 @@ pub enum ParseError {
     ConnectionList,
     /// A "Connection" naming "content-length" or "transfer-encoding".
     ConnectionNamesFraming,
+    /// A "Transfer-Encoding" line with no coding, a coding that isn't a token (a parameter
+    /// included), or "chunked" more than once.
+    TransferCoding,
+    // a response's chunked body (5. Relay response)
+    /// A chunk size that isn't 1 to 16 hex digits, or spaces after it with no ";".
+    ChunkSize,
+    /// A control character other than tab in a chunk extension.
+    ChunkExtension,
+    /// Chunk data not followed by "\r\n".
+    ChunkDataEnd,
 }
 
 /// Why a settings or secrets file couldn't be loaded.

@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tally_core::{
-    Entry, LogLine, Secrets, Settings, check_settings, parse_log_line, parse_secrets,
-    parse_settings,
+    Entry, LogLine, Secrets, Settings, check_secrets, check_settings, parse_log_line,
+    parse_secrets, parse_settings,
 };
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -265,7 +265,8 @@ pub fn checked(settings: &str, secrets: &str) -> (Settings, Secrets) {
         parse_secrets(secrets.as_bytes(), Path::new("secrets.toml")).expect("the secrets parse");
     let raw = parse_settings(settings.as_bytes(), Path::new("settings.toml"))
         .expect("the settings parse");
-    let settings = check_settings(raw, &secrets).expect("the settings pass the startup rules");
+    let secrets = check_secrets(secrets, &raw).expect("the secrets pass the startup rules");
+    let settings = check_settings(raw).expect("the settings pass the startup rules");
     (settings, secrets)
 }
 
@@ -459,6 +460,14 @@ impl Program {
         }
         let body = self.buffer.drain(..length).collect();
         (head, body)
+    }
+
+    /// The next "count" bytes, for a body with no "content-length".
+    pub async fn take(&mut self, count: usize) -> Vec<u8> {
+        while self.buffer.len() < count {
+            assert!(self.read_more().await, "the proxy closed first");
+        }
+        self.buffer.drain(..count).collect()
     }
 
     /// Everything until the proxy closes the connection. A reset ends it like a close.

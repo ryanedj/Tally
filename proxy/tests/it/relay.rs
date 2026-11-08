@@ -153,18 +153,71 @@ async fn silence_inside_a_body_with_a_length_cuts_the_response_short() {
     .await;
 }
 
-// DESIGN, Responses: for a response that ends with the close, the proxy "only notices silence"
 #[tokio::test]
 async fn silence_inside_a_chunked_body_cuts_the_response_short() {
     assert_cut_short_by_silence(
         "/stall-chunked",
-        b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n3\r\nabc\r\n",
+        b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n3\r\nabc\r\n",
     )
     .await;
 }
 
-// RFC 9112 §8: a response that ends with the close "is considered complete unless an error was
-// indicated by the underlying connection". The limits stay long, so only the reset can cut it.
+// RFC 9112 §8: a chunked body "is incomplete if the zero-sized chunk that terminates the encoding
+// has not been received"
+#[tokio::test]
+async fn a_chunked_body_closed_before_its_last_chunk_is_cut_short() {
+    let (server, _seen) = start_fake_api().await;
+    let proxy = start_proxy(&settings_for(server), SECRETS, LIMITS).await;
+    let mut program = Program::connect(proxy.address).await;
+
+    program.send(&get("/cut-chunked", "")).await;
+    assert_eq!(
+        String::from_utf8_lossy(&program.rest().await),
+        "HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n3\r\nabc\r\n"
+    );
+
+    let (_, lines) = proxy.stop().await;
+    assert_eq!(
+        summary(&lines),
+        [
+            "start",
+            "pass api.weather.local:80",
+            "upstream_error [] api.weather.local:80 about 1 response_incomplete",
+            "stop"
+        ]
+    );
+}
+
+// The bytes that break the framing never reach the program, so its body lacks its last chunk
+#[tokio::test]
+async fn a_chunked_body_with_broken_framing_is_cut_short() {
+    let (server, _seen) = start_fake_api().await;
+    let proxy = start_proxy(&settings_for(server), SECRETS, LIMITS).await;
+    let mut program = Program::connect(proxy.address).await;
+
+    program.send(&get("/bad-chunked", "")).await;
+    let head = b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n";
+    let relayed = program.rest().await;
+    assert!(
+        relayed.starts_with(head) && relayed.len() <= head.len() + b"3\r\nabc\r\n".len(),
+        "{:?}",
+        String::from_utf8_lossy(&relayed)
+    );
+
+    let (_, lines) = proxy.stop().await;
+    assert_eq!(
+        summary(&lines),
+        [
+            "start",
+            "pass api.weather.local:80",
+            "upstream_error [] api.weather.local:80 about 1 response_incomplete",
+            "stop"
+        ]
+    );
+}
+
+// A response with no length ends with the close: RFC 9112 §8 counts it complete "unless an error
+// was indicated by the underlying connection". The limits stay long, so only the reset can cut it.
 #[tokio::test]
 async fn a_reset_inside_a_body_that_ends_with_the_close_cuts_the_response_short() {
     let (server, _seen) = start_fake_api().await;
@@ -236,22 +289,81 @@ async fn a_204_keeps_the_connection_open() {
     assert_eq!(proxy.stop().await.0, Ok(()));
 }
 
+// The proxy knows where a chunked response ends, so the connection stays open, as after
+// Content-Length
 #[tokio::test]
-async fn a_chunked_response_is_relayed_until_the_server_closes() {
+async fn a_chunked_response_is_relayed_to_its_last_chunk_and_the_connection_stays_open() {
     let (server, _seen) = start_fake_api().await;
     let proxy = start_proxy(&settings_for(server), SECRETS, LIMITS).await;
     let mut program = Program::connect(proxy.address).await;
 
     program.send(&get("/chunked", "")).await;
     assert_eq!(
-        program.rest().await,
-        b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n"
+        program.head().await,
+        "HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n"
     );
+    let body = b"3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n";
+    assert_eq!(program.take(body.len()).await, body);
+    program.send(&get("/ok", "")).await;
+    assert_eq!(program.response().await.1, b"ok");
 
     let (_, lines) = proxy.stop().await;
     assert_eq!(
         summary(&lines),
-        ["start", "pass api.weather.local:80", "stop"]
+        [
+            "start",
+            "pass api.weather.local:80",
+            "pass api.weather.local:80",
+            "stop"
+        ]
+    );
+}
+
+// RFC 9112 §7.1: "chunked-body = *chunk last-chunk trailer-section CRLF"
+#[tokio::test]
+async fn a_chunked_response_with_a_trailer_is_relayed_whole() {
+    let (server, _seen) = start_fake_api().await;
+    let proxy = start_proxy(&settings_for(server), SECRETS, LIMITS).await;
+    let mut program = Program::connect(proxy.address).await;
+
+    program.send(&get("/chunked-trailers", "")).await;
+    program.head().await;
+    let body = b"3\r\nabc\r\n0\r\nx-checksum: 1\r\n\r\n";
+    assert_eq!(program.take(body.len()).await, body);
+    program.send(&get("/ok", "")).await;
+    assert_eq!(program.response().await.1, b"ok");
+    assert_eq!(proxy.stop().await.0, Ok(()));
+}
+
+// The Server keeps the connection open after the last chunk, the next request is answered well
+// before the Server-silence limit, so the response ended at its last chunk, not at a close
+#[tokio::test]
+async fn a_chunked_response_ends_at_its_last_chunk_without_waiting_for_the_close() {
+    let (server, _seen) = start_fake_api().await;
+    let proxy = start_proxy(&settings_for(server), SECRETS, LIMITS).await;
+    let mut program = Program::connect(proxy.address).await;
+
+    program.send(&get("/chunked-held-open", "")).await;
+    let answered = timeout(LIMITS.server_silence / 2, async {
+        program.head().await;
+        let body = b"3\r\nabc\r\n0\r\n\r\n";
+        assert_eq!(program.take(body.len()).await, body);
+        program.send(&get("/ok", "")).await;
+        program.response().await
+    })
+    .await
+    .expect("the response ends at its last chunk");
+    assert_eq!(answered.1, b"ok");
+
+    let (_, lines) = proxy.stop().await;
+    assert_eq!(
+        summary(&lines),
+        [
+            "start",
+            "pass api.weather.local:80",
+            "pass api.weather.local:80",
+            "stop"
+        ]
     );
 }
 

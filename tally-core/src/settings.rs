@@ -27,7 +27,8 @@ struct RawKey {
     header: String,
 }
 
-/// Settings that passed every startup rule: only "check_settings" builds them.
+/// Settings that passed every startup rule on the settings file, only "check_settings" builds
+/// them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     client: String,
@@ -84,21 +85,31 @@ impl Key {
     }
 }
 
-/// The real keys, by key name. A value only leaves through "get": "Debug" prints the names.
+/// The secrets file once parsed, before "check_secrets". "Debug" prints the names.
 #[derive(Deserialize)]
 #[serde(transparent)]
-pub struct Secrets(BTreeMap<String, String>);
+pub struct RawSecrets(BTreeMap<String, String>);
+
+impl fmt::Debug for RawSecrets {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_set().entries(self.0.keys()).finish()
+    }
+}
+
+/// The real keys, by key name, that passed every startup rule on the secrets, only
+/// "check_secrets" builds them. A value only leaves through "get", "Debug" prints the names.
+pub struct Secrets(RawSecrets);
 
 impl Secrets {
     /// The real key named "name".
     pub fn get(&self, name: &str) -> Option<&str> {
-        self.0.get(name).map(String::as_str)
+        self.0.0.get(name).map(String::as_str)
     }
 }
 
 impl fmt::Debug for Secrets {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_set().entries(self.0.keys()).finish()
+        fmt::Debug::fmt(&self.0, f)
     }
 }
 
@@ -136,7 +147,7 @@ pub fn parse_settings(bytes: &[u8], path: &Path) -> Result<RawSettings, LoadErro
 
 /// Reads the secrets from the file's bytes. An error gives only the line, since the TOML error
 /// could quote a secret.
-pub fn parse_secrets(bytes: &[u8], path: &Path) -> Result<Secrets, LoadError> {
+pub fn parse_secrets(bytes: &[u8], path: &Path) -> Result<RawSecrets, LoadError> {
     toml::from_slice(bytes).map_err(|error: toml::de::Error| LoadError::InvalidSecrets {
         path: path.to_path_buf(),
         line: line_of(&error, bytes),
@@ -154,12 +165,9 @@ fn line_of(error: &toml::de::Error, bytes: &[u8]) -> Option<usize> {
     })
 }
 
-/// Checks every startup rule (1. Proxy startup): the settings with hosts normalized and headers
-/// lowercased, or every problem found.
-pub fn check_settings(
-    raw: RawSettings,
-    secrets: &Secrets,
-) -> Result<Settings, Vec<StartupProblem>> {
+/// Checks every startup rule on the settings file (1. Proxy startup), returns the settings with hosts
+/// normalized and headers lowercased, or every problem found.
+pub fn check_settings(raw: RawSettings) -> Result<Settings, Vec<StartupProblem>> {
     let mut problems = Vec::new();
 
     let mut hosts = BTreeMap::new();
@@ -204,9 +212,6 @@ pub fn check_settings(
         if is_forbidden {
             problems.push(StartupProblem::ForbiddenHeader { key: name.clone() });
         }
-        if secrets.get(&name).is_none() {
-            problems.push(StartupProblem::NoSecret { key: name.clone() });
-        }
         let key = Key {
             placeholder: raw_key.placeholder,
             host,
@@ -215,8 +220,35 @@ pub fn check_settings(
         keys.insert(name, key);
     }
 
-    for (name, value) in &secrets.0 {
-        if !keys.contains_key(name) {
+    if !problems.is_empty() {
+        return Err(problems);
+    }
+    Ok(Settings {
+        client: raw.client,
+        listen_address: raw.listen_address,
+        log_folder: raw.log_folder,
+        hosts,
+        keys,
+    })
+}
+
+/// Checks every startup rule on the secrets (1. Proxy startup), returns the secrets, or every problem
+/// found. It reads only the key names of "settings", so it also runs on settings that break a
+/// rule.
+pub fn check_secrets(
+    raw: RawSecrets,
+    settings: &RawSettings,
+) -> Result<Secrets, Vec<StartupProblem>> {
+    let mut problems = Vec::new();
+
+    for name in settings.keys.keys() {
+        if !raw.0.contains_key(name) {
+            problems.push(StartupProblem::NoSecret { key: name.clone() });
+        }
+    }
+
+    for (name, value) in &raw.0 {
+        if !settings.keys.contains_key(name) {
             problems.push(StartupProblem::SecretWithoutKey {
                 secret: name.clone(),
             });
@@ -233,11 +265,5 @@ pub fn check_settings(
     if !problems.is_empty() {
         return Err(problems);
     }
-    Ok(Settings {
-        client: raw.client,
-        listen_address: raw.listen_address,
-        log_folder: raw.log_folder,
-        hosts,
-        keys,
-    })
+    Ok(Secrets(raw))
 }

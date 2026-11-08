@@ -41,11 +41,38 @@ res! { response_100_continue,
 
 res! { response_chunked,
     b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
+    |head| { assert_eq!(head.body_end, BodyEnd::Chunked); }
+}
+
+res! { response_gzip_then_chunked,
+    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n",
+    |head| { assert_eq!(head.body_end, BodyEnd::Chunked); }
+}
+
+// Coding names are case-insensitive (RFC 9112 §7)
+res! { response_chunked_in_capitals,
+    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: CHUNKED\r\n\r\n",
+    |head| { assert_eq!(head.body_end, BodyEnd::Chunked); }
+}
+
+res! { response_codings_on_two_lines,
+    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n",
+    |head| { assert_eq!(head.body_end, BodyEnd::Chunked); }
+}
+
+res! { response_codings_skip_empty_elements,
+    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, , chunked\r\n\r\n",
+    |head| { assert_eq!(head.body_end, BodyEnd::Chunked); }
+}
+
+// RFC 9112 §6.3: if chunked "is not the final encoding", the body ends with the close
+res! { response_chunked_not_last_ends_with_the_close,
+    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked, gzip\r\n\r\n",
     |head| { assert_eq!(head.body_end, BodyEnd::UntilServerCloses); }
 }
 
-res! { response_with_any_transfer_encoding,
-    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n",
+res! { response_gzip_alone_ends_with_the_close,
+    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n",
     |head| { assert_eq!(head.body_end, BodyEnd::UntilServerCloses); }
 }
 

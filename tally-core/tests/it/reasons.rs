@@ -52,3 +52,7 @@ reason! { length_on_no_body, LengthOnNoBody, MalformedRequest }
 reason! { length_and_encoding, LengthAndEncoding, MalformedRequest }
 reason! { connection_list, ConnectionList, MalformedRequest }
 reason! { connection_names_framing, ConnectionNamesFraming, MalformedRequest }
+reason! { transfer_coding, TransferCoding, MalformedRequest }
+reason! { chunk_size, ChunkSize, MalformedRequest }
+reason! { chunk_extension, ChunkExtension, MalformedRequest }
+reason! { chunk_data_end, ChunkDataEnd, MalformedRequest }

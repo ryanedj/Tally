@@ -1,6 +1,8 @@
+mod chunked;
 mod request;
 mod response;
 
+pub use chunked::ChunkedBody;
 pub use request::{Method, RequestHead, parse_host_port, parse_request_head};
 pub use response::{BodyEnd, ResponseHead, parse_response_head};
 

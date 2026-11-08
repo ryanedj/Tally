@@ -85,8 +85,8 @@ pub(crate) fn route(received: &Received) -> Response {
         "/silent" => return Response::Silent,
         // a body shorter than announced (response_incomplete)
         "/cut-body" => b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 10\r\n\r\nabcd",
-        // part of the body, then silence, in a body with a length and in one that ends with the
-        // close (response_incomplete)
+        // part of the body, then silence, in a body with a length and in a chunked one
+        // (response_incomplete)
         "/stall-body" => {
             return Response::Stalled(
                 b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 10\r\n\r\nabcd".to_vec(),
@@ -101,6 +101,30 @@ pub(crate) fn route(received: &Received) -> Response {
         "/stall-chunked" => {
             return Response::Stalled(
                 b"HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n".to_vec(),
+            );
+        }
+        // a chunked body cut by the close before its last chunk (response_incomplete)
+        "/cut-chunked" => {
+            b"HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n"
+        }
+        // a chunk size that isn't hex (response_incomplete)
+        "/bad-chunked" => {
+            b"HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\nzz\r\nde\r\n0\r\n\r\n"
+        }
+        // For tests, chunked done right, in the ways a proxy must follow
+        // A trailer after the last chunk (RFC 9112 §7.1.2)
+        "/chunked-trailers" => {
+            b"HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\nx-checksum: 1\r\n\r\n"
+        }
+        // A whole second response right after the last chunk, which the program must never see
+        "/extra-after-chunked" => {
+            b"HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\nHTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 8\r\n\r\nsmuggled"
+        }
+        // Even if the connection remains open after the terminating chunk, the response
+        // should end there, not wait for the connection to close.
+        "/chunked-held-open" => {
+            return Response::Stalled(
+                b"HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n".to_vec(),
             );
         }
         _ => b"HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",

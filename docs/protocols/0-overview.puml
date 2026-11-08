@@ -103,6 +103,6 @@ rnote over Checker #d1d5ef
   re-check every line against the settings
 end rnote
 
-Checker --> Aud : report: counts and flags
+Checker --> Aud : report: rows, counts and flags
 
 @enduml

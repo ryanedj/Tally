@@ -1,8 +1,8 @@
 use crate::common::checked;
 use std::path::{Path, PathBuf};
 use tally_core::{
-    LoadError, StartupProblem, check_settings, parse_secrets, parse_settings, read_config_file,
-    settings_sha256,
+    LoadError, StartupProblem, check_secrets, check_settings, parse_secrets, parse_settings,
+    read_config_file, settings_sha256,
 };
 
 const SETTINGS: &str = include_str!("fixtures/one-key.toml");
@@ -14,7 +14,10 @@ fn problems(settings: &str, secrets: &str) -> Vec<StartupProblem> {
         .expect("the settings parse");
     let secrets =
         parse_secrets(secrets.as_bytes(), Path::new("secrets.toml")).expect("the secrets parse");
-    check_settings(raw, &secrets).err().unwrap_or_default()
+    let secret_problems = check_secrets(secrets, &raw).err().unwrap_or_default();
+    let mut problems = check_settings(raw).err().unwrap_or_default();
+    problems.extend(secret_problems);
+    problems
 }
 
 // Loading
@@ -55,12 +58,21 @@ fn hosts_are_normalized_and_headers_lowercased() {
     assert_eq!(key.header(), "x-api-key");
 }
 
+// What the checker relies on, no secrets to hand
+#[test]
+fn the_settings_pass_with_no_secrets() {
+    let settings = SETTINGS.replace("\"api.weather.local:80\" =", "\"API.Weather.Local\" =");
+    let raw = parse_settings(settings.as_bytes(), Path::new("settings.toml"))
+        .expect("the settings parse");
+    let settings = check_settings(raw).expect("the settings pass the startup rules");
+    assert_eq!(settings.client(), "weather-app");
+    assert!(settings.hosts().contains_key("api.weather.local:80"));
+}
+
 /// The log folder of "settings" once loaded from a file at "path".
 fn log_folder(settings: &str, path: &str) -> PathBuf {
     let raw = parse_settings(settings.as_bytes(), Path::new(path)).expect("the settings parse");
-    let secrets =
-        parse_secrets(SECRETS.as_bytes(), Path::new("secrets.toml")).expect("the secrets parse");
-    let settings = check_settings(raw, &secrets).expect("the settings pass the startup rules");
+    let settings = check_settings(raw).expect("the settings pass the startup rules");
     settings.log_folder().to_path_buf()
 }
 

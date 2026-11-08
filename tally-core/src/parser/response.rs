@@ -8,7 +8,9 @@ pub enum BodyEnd {
     NoBody,
     /// After exactly this many bytes ("Content-Length").
     Length(u64),
-    /// Chunked, or no length: when the Server closes.
+    /// "chunked" as the last transfer coding: at the end of its framing (RFC 9112 §7.1).
+    Chunked,
+    /// No length, or transfer codings that don't end in "chunked": when the Server closes.
     UntilServerCloses,
 }
 
@@ -63,6 +65,9 @@ pub fn parse_response_head(buf: &[u8]) -> Result<Parsed<ResponseHead>, ParseErro
     let ends_with_its_head = matches!(status, 100..=199 | 204);
     let mut content_length = None;
     let mut has_transfer_encoding = false;
+    // Across every "Transfer-Encoding" line, in order (RFC 9110 §5.3)
+    let mut has_chunked = false;
+    let mut ends_in_chunked = false;
     let mut connection_names = Vec::new();
     for (name, value) in &headers {
         match name.as_str() {
@@ -78,7 +83,31 @@ pub fn parse_response_head(buf: &[u8]) -> Result<Parsed<ResponseHead>, ParseErro
             "transfer-encoding" if content_length.is_some() => {
                 return Err(ParseError::LengthAndEncoding);
             }
-            "transfer-encoding" => has_transfer_encoding = true,
+            "transfer-encoding" => {
+                has_transfer_encoding = true;
+                let mut codings = value
+                    .split(|&b| b == b',')
+                    .map(trim_spaces)
+                    .filter(|coding| !coding.is_empty())
+                    .peekable();
+                if codings.peek().is_none() {
+                    return Err(ParseError::TransferCoding);
+                }
+                for coding in codings {
+                    // A parameter isn't a token, and chunked takes none (RFC 9112 §7.1)
+                    if !coding.iter().all(|&b| is_token(b)) {
+                        return Err(ParseError::TransferCoding);
+                    }
+                    let is_chunked = coding.eq_ignore_ascii_case(b"chunked");
+                    // RFC 9112 §6.1: "A sender MUST NOT apply the chunked transfer coding more
+                    // than once"
+                    if is_chunked && has_chunked {
+                        return Err(ParseError::TransferCoding);
+                    }
+                    has_chunked |= is_chunked;
+                    ends_in_chunked = is_chunked;
+                }
+            }
             "connection" => {
                 for element in value.split(|&b| b == b',') {
                     let element = trim_spaces(element);
@@ -102,11 +131,13 @@ pub fn parse_response_head(buf: &[u8]) -> Result<Parsed<ResponseHead>, ParseErro
         }
     }
 
-    // RFC 9112 §6.3; Content-Length and Transfer-Encoding together were refused above
+    // RFC 9112 §6.3; Content-Length and Transfer-Encoding together were refused above. Codings
+    // that don't end in chunked end with the close (rule 4)
     let body_end = match (status, content_length) {
         (100..=199 | 204 | 304, _) => BodyEnd::NoBody,
         (_, Some(length)) => BodyEnd::Length(length),
-        (_, None) => BodyEnd::UntilServerCloses,
+        _ if ends_in_chunked => BodyEnd::Chunked,
+        _ => BodyEnd::UntilServerCloses,
     };
     let head = ResponseHead {
         status,

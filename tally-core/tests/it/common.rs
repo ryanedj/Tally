@@ -1,5 +1,5 @@
 use std::path::Path;
-use tally_core::{Secrets, Settings, check_settings, parse_secrets, parse_settings};
+use tally_core::{Secrets, Settings, check_secrets, check_settings, parse_secrets, parse_settings};
 
 // One test per row, like httparse's "req!" and "res!". A good row checks that the head ends
 // where "$bytes" ends (any "then" bytes come after it), that httparse agrees on its length,
@@ -77,7 +77,8 @@ pub fn checked(settings: &str, secrets: &str) -> (Settings, Secrets) {
         .expect("the settings parse");
     let secrets =
         parse_secrets(secrets.as_bytes(), Path::new("secrets.toml")).expect("the secrets parse");
-    let settings = check_settings(raw, &secrets).expect("the settings pass every startup rule");
+    let secrets = check_secrets(secrets, &raw).expect("the secrets pass every startup rule");
+    let settings = check_settings(raw).expect("the settings pass every startup rule");
     (settings, secrets)
 }
 

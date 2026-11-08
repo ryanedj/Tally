@@ -1,7 +1,7 @@
 use crate::reply::{Forwarded, Outcome, upstream_failed};
 use crate::serve::Shared;
 use crate::wait::{Interrupted, read_more, write_with_progress};
-use tally_core::{BodyEnd, Parsed, UpstreamReason, parse_response_head};
+use tally_core::{BodyEnd, ChunkedBody, Parsed, UpstreamReason, parse_response_head};
 use tokio::io::AsyncRead;
 use tokio::net::TcpStream;
 use tokio::time::Instant;
@@ -112,6 +112,34 @@ pub(crate) async fn relay_response(
                 Err(Interrupted::CutOff) => return Outcome::Stop,
             }
         },
+        BodyEnd::Chunked => {
+            let mut chunks = ChunkedBody::default();
+            loop {
+                // A buffer that breaks the framing isn't relayed, the body lacks its last chunk
+                let Ok(end) = chunks.advance(&buffer) else {
+                    break false;
+                };
+                // Bytes past the last chunk are never relayed
+                let part = buffer
+                    .get(..end.unwrap_or(buffer.len()))
+                    .unwrap_or_default();
+                if write_with_progress(program, part, limits.write, &shared.cut_off)
+                    .await
+                    .is_err()
+                {
+                    return Outcome::Stop;
+                }
+                if end.is_some() {
+                    break true;
+                }
+                buffer.clear();
+                match read_more(server, &mut buffer, silence(), &shared.cut_off).await {
+                    Ok(Ok(0) | Err(_)) | Err(Interrupted::TimedOut) => break false,
+                    Ok(Ok(_)) => {}
+                    Err(Interrupted::CutOff) => return Outcome::Stop,
+                }
+            }
+        }
         BodyEnd::UntilServerCloses => loop {
             if write_with_progress(program, &buffer, limits.write, &shared.cut_off)
                 .await
@@ -123,8 +151,8 @@ pub(crate) async fn relay_response(
             match read_more(server, &mut buffer, silence(), &shared.cut_off).await {
                 Ok(Ok(0)) => break true,
                 Ok(Ok(_)) => {}
-                // RFC 9112 §8: complete "unless an error was indicated by the underlying
-                // connection"
+                // RFC 9112 §8: a body with no length or chunked coding is complete "unless an
+                // error was indicated by the underlying connection"
                 Ok(Err(_)) | Err(Interrupted::TimedOut) => break false,
                 Err(Interrupted::CutOff) => return Outcome::Stop,
             }

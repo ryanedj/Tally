@@ -34,7 +34,7 @@ function main(command_line):
         host = normalize(host)            // the Parser's host[:port] rule: lowercase host:port, port written out; Error if it refuses
     for key in settings.keys:
         key.header = lowercase(key.header)
-    problems = startup_problems(settings, secrets)
+    problems = settings_problems(settings) + secrets_problems(secrets, settings)   // the checker runs only the first
     if problems is not empty:
         print(problems)
         exit(failure)
@@ -114,9 +114,8 @@ function main(command_line):
     exit(success)
 
 
-// Every rule the settings and secrets break. All of them are reported.
-// A secret's value is never printed, only its name.
-function startup_problems(settings, secrets):
+// Every rule the settings file breaks.
+function settings_problems(settings):
     problems = []
 
     for host in settings.hosts:
@@ -135,6 +134,14 @@ function startup_problems(settings, secrets):
 
     for key in settings.keys whose placeholder an earlier key already uses:   // keys in name order
         problems.push("key " + key.name + ": its placeholder is also key " + earlier.name + "'s")
+
+    return problems
+
+
+// Every rule the secrets break, against the settings' key names, so it also runs on settings that
+// break a rule. A secret's value is never printed, only its name.
+function secrets_problems(secrets, settings):
+    problems = []
 
     key_names    = [key.name for key in settings.keys]
     secret_names = [name for (name, value) in secrets]

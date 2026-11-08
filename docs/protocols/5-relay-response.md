@@ -15,7 +15,7 @@
 
 **Called by:** [4. One program connection](4-program-connection.md), at step 6.
 
-**Uses:** the [Parser](../DESIGN.md#parser), to read and check the response head and find where its body ends (steps 2 and 4), and `upstream_failed` from [4. One program connection](4-program-connection.md).
+**Uses:** the [Parser](../DESIGN.md#parser), to read and check the response head and find where its body ends (steps 2 and 4), and to follow a chunked body's framing (step 5), and `upstream_failed` from [4. One program connection](4-program-connection.md).
 
 ## Pseudo code
 
@@ -58,7 +58,9 @@ function where_body_ends(response):
         return NoBody
     if response has Content-Length:
         return Length(response.content_length)
-    return UntilServerCloses
+    if the last of response's transfer codings is chunked:   // RFC 9112 §6.3
+        return Chunked
+    return UntilServerCloses                                 // no length, or codings not ending in chunked
 
 
 // content-length and transfer-encoding stay: the body is relayed unchanged.
@@ -78,9 +80,14 @@ function relay_body(server, program, body_end, silence_limit):
             if the server closes, or sends nothing for silence_limit, before size bytes:
                 return Incomplete
             return Done
+        Chunked:
+            copy from server to program up to the end of the chunked framing, read as it passes   // nothing past it
+            if the server closes, breaks the connection, sends nothing for silence_limit, or breaks the framing, before the last chunk:
+                return Incomplete         // the last chunk missing is RFC 9112 §8, the silence limit is ours; a buffer that breaks the framing isn't relayed
+            return Done
         UntilServerCloses:
             copy from server to program until the server closes
-            if the server sends nothing for silence_limit, or breaks the connection:   // RFC 9112 §8
+            if the server sends nothing for silence_limit (ours), or breaks the connection (RFC 9112 §8):
                 return Incomplete
             return Done
 ```

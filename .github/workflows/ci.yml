@@ -29,3 +29,7 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace
+      - name: Run the demo, judged by the checker
+        run: bash .claude/skills/tally-demo/scripts/demo.sh
+        env:
+          TALLY_DEMO_STRICT: 1

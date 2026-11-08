@@ -207,7 +207,7 @@ where
 #[cfg(test)]
 pub(crate) fn shared_for_tests(limits: Limits, writer: LogWriter, connect: Connect) -> Shared {
     use std::path::Path;
-    use tally_core::{check_settings, parse_secrets, parse_settings};
+    use tally_core::{check_secrets, check_settings, parse_secrets, parse_settings};
 
     let secrets = parse_secrets(
         include_bytes!("../../tally-core/tests/it/fixtures/one-key-secrets.toml"),
@@ -219,7 +219,8 @@ pub(crate) fn shared_for_tests(limits: Limits, writer: LogWriter, connect: Conne
         Path::new("settings.toml"),
     )
     .expect("the settings parse");
-    let settings = check_settings(raw, &secrets).expect("the settings pass the startup rules");
+    let secrets = check_secrets(secrets, &raw).expect("the secrets pass the startup rules");
+    let settings = check_settings(raw).expect("the settings pass the startup rules");
     Shared {
         settings,
         secrets,

@@ -59,7 +59,11 @@ impl From<ParseError> for RefuseReason {
             | ParseError::LengthOnNoBody
             | ParseError::LengthAndEncoding
             | ParseError::ConnectionList
-            | ParseError::ConnectionNamesFraming => RefuseReason::MalformedRequest,
+            | ParseError::ConnectionNamesFraming
+            | ParseError::TransferCoding
+            | ParseError::ChunkSize
+            | ParseError::ChunkExtension
+            | ParseError::ChunkDataEnd => RefuseReason::MalformedRequest,
         }
     }
 }

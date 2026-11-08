@@ -167,9 +167,9 @@ One row per way out of a loop turn, and one test per row. "Sending to the Server
 | Sending to the Server fails | `release`/`pass`, then `upstream_error`, `send_failed` | 502 | open, unless `Connection: close` or a shutdown, then closed gently |
 | Bad response, or the Server closes before the end of its head (see [5. Relay response](5-relay-response.md)) | `release`/`pass`, then `upstream_error`, `bad_response` | 502 | closed gently |
 | 30 s with nothing from the Server before the final response head: it doesn't read the request, or doesn't answer (see [5. Relay response](5-relay-response.md)) | `release`/`pass`, then `upstream_error`, `response_timeout` | 504 | open, unless `Connection: close` or a shutdown, then closed gently |
-| Response cut short: the Server closes, breaks the connection, or goes silent after the head (see [5. Relay response](5-relay-response.md)) | `release`/`pass`, then `upstream_error`, `response_incomplete` | none: the response stops | closed gently |
-| Response with a known length (`Content-Length`, `204`, `304`) | `release`/`pass` | relayed | open, unless `Connection: close` or a shutdown, then closed gently |
-| Chunked response, or no length | `release`/`pass` | relayed until the Server closes | closed gently |
+| Response cut short: the Server closes, breaks the connection, goes silent after the head, or breaks the chunked framing (see [5. Relay response](5-relay-response.md)) | `release`/`pass`, then `upstream_error`, `response_incomplete` | none: the response stops | closed gently |
+| Response with a known length (`Content-Length`, chunked, `204`, `304`) | `release`/`pass` | relayed | open, unless `Connection: close` or a shutdown, then closed gently |
+| Response with no length | `release`/`pass` | relayed until the Server closes | closed gently |
 | Program stops reading for 30 s | `release`/`pass` | cut off | closed |
 | Shutdown time limit while connecting or sending to the Server | `release`/`pass`, then `upstream_error`, `shutdown` | none | closed |
 | Shutdown time limit at any other wait | nothing new | none | closed |

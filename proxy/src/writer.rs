@@ -190,8 +190,9 @@ pub fn create_log_file(folder: &Path, run: &str) -> io::Result<File> {
         .append(true)
         .create_new(true)
         .open(folder.join(format!("{run}.jsonl")))?;
-    // The file's name is on disk once its folder is synced. fsync covers the changes made after
-    // the folder was opened.
+    // The file's name is on disk once its folder is synced. fsync(2) flushes "all modified
+    // in-core data" of the folder
+    // TODO: check this includes changes made after it was opened
     #[cfg(unix)]
     folder_handle.sync_all()?;
     Ok(file)

@@ -125,6 +125,26 @@ res! { response_quoted_connection,
     Err(ConnectionList)
 }
 
+res! { response_chunked_twice,
+    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked, chunked\r\n\r\n",
+    Err(TransferCoding)
+}
+
+res! { response_chunked_twice_on_two_lines,
+    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: gzip, chunked\r\n\r\n",
+    Err(TransferCoding)
+}
+
+res! { response_chunked_with_a_parameter,
+    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked;x=1\r\n\r\n",
+    Err(TransferCoding)
+}
+
+res! { response_empty_transfer_encoding,
+    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: , \r\n\r\n",
+    Err(TransferCoding)
+}
+
 // The rules shared with requests (pass 1)
 
 res! { response_lone_lf_line_endings,

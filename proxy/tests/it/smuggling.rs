@@ -326,6 +326,39 @@ async fn bytes_past_a_responses_content_length_never_reach_the_program() {
     );
 }
 
+// The program's connection stays open after a chunked response, so the bytes past its last
+// chunk must never reach it as the answer to its next request
+#[tokio::test]
+async fn bytes_past_a_responses_last_chunk_never_reach_the_program() {
+    let (server, _seen) = start_fake_api().await;
+    let proxy = start_proxy(&settings_for(server), SECRETS, LIMITS).await;
+    let mut program = Program::connect(proxy.address).await;
+
+    program.send(&get("/extra-after-chunked", "")).await;
+    assert_eq!(
+        program.head().await,
+        "HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n"
+    );
+    let body = b"3\r\nabc\r\n0\r\n\r\n";
+    assert_eq!(program.take(body.len()).await, body);
+    program.send(&get("/no-content", "")).await;
+    assert_eq!(
+        program.response().await,
+        ("HTTP/1.1 204 No Content\r\n\r\n".to_string(), Vec::new())
+    );
+
+    let (_, lines) = proxy.stop().await;
+    assert_eq!(
+        summary(&lines),
+        [
+            "start",
+            "pass api.weather.local:80",
+            "pass api.weather.local:80",
+            "stop"
+        ]
+    );
+}
+
 #[tokio::test]
 async fn the_server_gets_the_request_rewritten_with_connection_close() {
     let (server, seen) = start_fake_api().await;

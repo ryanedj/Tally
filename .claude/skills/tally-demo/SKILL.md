@@ -25,8 +25,9 @@ Request: $ARGUMENTS
 - The fake API prints every request that reaches it. The real keys are in `demo/demo-secrets.toml` (fake values, committed for the demo), so you can tell a released key from a placeholder.
 - The proxy's settings are `demo/settings.toml`.
 - The log has one JSON line per decision, numbered by `seq`, opened by a `start` line and closed by a `stop` line. Since the requests run one at a time, their lines follow in the same order.
+- The checker ran last, on the log and the settings. It prints one row per line, the counts, then its flags. Its exit code is 0 for a clean run, 1 if anything is flagged, and 2 if the run couldn't be judged. It sees only the log and the settings, so it can't tell what reached the fake API.
 
-Before judging, read in `docs/DESIGN.md`: "The log" (the fields of each event), "Decisions and reasons" (each event and reason, and the reply it gets), and "Handling one request". When several refusal reasons could apply, `docs/protocols/3-decide-request.md` says which wins.
+Before judging, read in `docs/DESIGN.md`: "The log" (the fields of each event), "Decisions and reasons" (each event and reason, and the reply it gets), "Handling one request" and "Checker". When several refusal reasons could apply, `docs/protocols/3-decide-request.md` says which wins.
 
 ## Report
 
@@ -36,8 +37,8 @@ Then one line per request, in order, the redirect's two hops on two lines. Each 
 
 > 1. The weather call: 200 `ok`. `seq` 1, `release [weather_key] api.weather.local:80`. The fake API got the real key.
 
-Then the start and stop lines, and the proxy's exit code.
+Then the start and stop lines, the proxy's exit code, and the checker's: its verdict, and each flag if it has any.
 
-End with "Unexpected:", then each thing in the run that differs from DESIGN or from the request's label: what you saw, the section of DESIGN it disagrees with, and what it could mean, without a fix. Or "nothing".
+End with "Unexpected:", then each thing in the run that differs from DESIGN or from the request's label, a flag or a checker exit code other than 0 included: what you saw, the section of DESIGN it disagrees with, and what it could mean, without a fix. Or "nothing".
 
 Write plainly: short sentences, no bold. Say when you're not sure.
